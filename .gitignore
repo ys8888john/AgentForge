@@ -1,0 +1,24 @@
+# Rust
+agentd/target/
+**/*.rs.bk
+
+# Node / Next.js
+web/node_modules/
+web/.next/
+web/out/
+web/.turbo/
+*.tsbuildinfo
+
+# Logs & temp
+*.log
+*.bak.*
+*.bak
+/tmp/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
+.env
+.env.local
