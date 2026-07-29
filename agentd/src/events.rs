@@ -7,6 +7,8 @@
 pub enum AgentEvent {
     /// 开始执行某一步（提示链 / 多步任务用），携带步骤序号与名字
     Step { index: usize, name: String },
+    /// 规划模式：模型制定的计划中的一步（Ch6 规划用），携带序号与描述
+    Plan { index: usize, name: String },
     /// 路由决策结果（Ch2 路由用）：分类命中的路由名 + 分类器原始输出
     Route { name: String, raw: String },
     /// 一个并行 worker 开始执行（Ch3 并行化用），携带序号与名字

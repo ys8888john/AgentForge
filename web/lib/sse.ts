@@ -28,6 +28,10 @@ export interface RunOptions {
   max_iter?: number;
   tools?: { name: string; description?: string }[];
   max_rounds?: number;
+  /** 规划模式：计划最多包含的步骤数 */
+  max_steps?: number;
+  /** 是否开启模型思考（reasoning），由设置页控制 */
+  think?: boolean;
 }
 
 /**

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createSession, runTask } from "@/lib/sse";
+import { useSettings } from "@/components/SettingsContext";
 
 type Block = {
   kind:
@@ -12,6 +13,7 @@ type Block = {
     | "revision"
     | "tool_call"
     | "tool_result"
+    | "plan"
     | "thought"
     | "token"
     | "done"
@@ -25,7 +27,8 @@ type Mode =
   | "routing"
   | "parallelization"
   | "reflection"
-  | "tool_use";
+  | "tool_use"
+  | "planning";
 
 export default function Page() {
   const [mode, setMode] = useState<Mode>("single");
@@ -63,12 +66,14 @@ export default function Page() {
     { name: "calculator", description: "计算数学表达式，参数 expr（如 1+2*3）" },
     { name: "current_time", description: "返回当前本地时间，无参数" },
   ]);
+  const [maxSteps, setMaxSteps] = useState(5);
   const [output, setOutput] = useState<Block[]>([]);
   const [running, setRunning] = useState(false);
   const [sessionId, setSessionId] = useState("");
   const tokenAcc = useRef("");
   const thoughtAcc = useRef("");
   const outRef = useRef<HTMLDivElement>(null);
+  const { settings } = useSettings();
 
   useEffect(() => {
     outRef.current?.scrollTo({ top: outRef.current.scrollHeight });
@@ -98,7 +103,9 @@ export default function Page() {
           critics: mode === "reflection" ? critics : undefined,
           max_iter: mode === "reflection" ? 2 : undefined,
           tools: mode === "tool_use" ? tools : undefined,
-          max_rounds: mode === "tool_use" ? 3 : undefined,
+          max_rounds: mode === "tool_use" ? settings.maxRounds : undefined,
+          max_steps: mode === "planning" ? maxSteps : undefined,
+          think: settings.think,
         },
         (ev) => {
           if (ev.event === "step") {
@@ -134,6 +141,12 @@ export default function Page() {
             setOutput((p) => [
               ...p,
               { kind: "tool_result", text: `${name} 返回：\n${output}` },
+            ]);
+          } else if (ev.event === "plan") {
+            const [idx, name] = ev.data.split(":");
+            setOutput((p) => [
+              ...p,
+              { kind: "plan", text: `计划 ${idx} · ${name}` },
             ]);
           } else if (ev.event === "route") {
             const [name, raw] = ev.data.split("\t");
@@ -245,6 +258,12 @@ export default function Page() {
           >
             工具调用
           </button>
+          <button
+            className={mode === "planning" ? "mode active" : "mode"}
+            onClick={() => setMode("planning")}
+          >
+            规划
+          </button>
         </div>
 
         {mode === "prompt_chaining" && (
@@ -327,7 +346,7 @@ export default function Page() {
               onClick={() =>
                 setRoutes((r) => [
                   ...r,
-                  { name: `路由${r.length + 1}`, prompt: "{input}" },
+                  { name: `路由${r.length + 1}`, description: "", prompt: "{input}" },
                 ])
               }
             >
@@ -440,7 +459,7 @@ export default function Page() {
         {mode === "tool_use" && (
           <div className="steps">
             <div className="routing-hint">
-              模型会自行决定何时调用下列工具：输出 [TOOL_CALL] 指令 → 后端执行 → 把结果喂回模型续答，直到给出最终答案（最多 3 轮）。
+              模型会自行决定何时调用下列工具：输出 [TOOL_CALL] 指令 → 后端执行 → 把结果喂回模型续答，直到给出最终答案（最多 {settings.maxRounds} 轮）。
             </div>
             {tools.map((tl, i) => (
               <div className="step" key={i}>
@@ -479,6 +498,33 @@ export default function Page() {
             </button>
           </div>
         )}
+
+        {mode === "planning" && (
+          <div className="steps">
+            <div className="routing-hint">
+              模型会先根据任务目标自动制定一份步骤计划（💡 计划），再按计逐步执行、最后汇总成最终答复。计划步骤数上限可在下方设置。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">计划步骤上限</div>
+                <div className="setting-desc">
+                  限制模型生成的计划最多包含几步（防御性上限，默认 5）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={1}
+                max={12}
+                value={maxSteps}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setMaxSteps(Number.isFinite(v) ? Math.min(12, Math.max(1, v)) : 1);
+                }}
+              />
+            </label>
+          </div>
+        )}
       </section>
 
       <section className="input-row">
@@ -507,8 +553,9 @@ export default function Page() {
             {b.kind === "revision" && <div className="revision-label">✏️ {b.text}</div>}
             {b.kind === "tool_call" && <div className="tool-call-label">🔧 {b.text}</div>}
             {b.kind === "tool_result" && <div className="tool-result-label">↩️ {b.text}</div>}
+            {b.kind === "plan" && <div className="plan-label">📋 {b.text}</div>}
             {b.kind === "thought" && (
-              <details className="thought" open>
+              <details className="thought" open={settings.thoughtOpen}>
                 <summary>💭 思考过程</summary>
                 <div className="thought-body">{b.text}</div>
               </details>

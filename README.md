@@ -4,7 +4,7 @@
 
 AgentForge 是一个开箱即用的 Agent 设计模式学习与实验平台：Rust 后端驱动模式引擎，Next.js 前端可视化流式输出，本地 Ollama 提供推理能力。无需任何云端 API Key，全程离线运行。
 
-## ✨ 六大 Agent 设计模式
+## ✨ 七大 Agent 设计模式
 
 | 模式 | 说明 |
 |------|------|
@@ -14,8 +14,9 @@ AgentForge 是一个开箱即用的 Agent 设计模式学习与实验平台：Ru
 | **并行化** (Parallelization) | 多路并发生成 + 汇总，体验分而治之 |
 | **反思** (Reflection) | 生成 → 自我评审 → 修订的迭代闭环 |
 | **工具调用** (Tool Use) | 提示式函数调用：模型输出 `[TOOL_CALL]` 协议，后端执行内置工具（计算器 / 当前时间）并回灌结果 |
+| **规划** (Planning) | 先制定步骤计划再按步执行、汇总：把任务拆成有序子任务序列，实时展示「📋 计划 N」 |
 
-每种模式的执行过程都以 **SSE 流式事件**（token / thought / tool_call / tool_result / done）实时推送到前端，让你直观看到 Agent 内部每一步发生了什么。
+每种模式的执行过程都以 **SSE 流式事件**（token / thought / plan / tool_call / tool_result / done）实时推送到前端，让你直观看到 Agent 内部每一步发生了什么。
 
 ## 🏗️ 架构
 
@@ -27,7 +28,7 @@ AgentForge 是一个开箱即用的 Agent 设计模式学习与实验平台：Ru
      前端 UI              模式引擎/工具执行          本地大模型推理
 ```
 
-- **agentd**（`agentd/`）：Rust + Axum。会话管理、六大模式引擎、SSE 事件流、内置工具（安全数学求值器 / 时间）。调用 Ollama 原生 `/api/chat` 端点（`think:false` 关闭思考模式）。
+- **agentd**（`agentd/`）：Rust + Axum。会话管理、七大模式引擎、SSE 事件流、内置工具（安全数学求值器 / 时间）。调用 Ollama 原生 `/api/chat` 端点（`think:false` 关闭思考模式）。
 - **web**（`web/`）：Next.js + React。模式选择、会话交互、流式渲染。
 - **模型**：默认 `qwen3`，可在配置中更换任意 Ollama 模型。
 
@@ -91,7 +92,7 @@ cd web && pnpm install && pnpm dev
 ├── agentd/              # Rust 后端（模式引擎 + 工具执行 + SSE）
 │   └── src/
 │       ├── llm.rs       # Ollama 客户端（原生 /api/chat 流式）
-│       └── patterns/    # 六大设计模式实现
+│       └── patterns/    # 七大设计模式实现
 ├── web/                 # Next.js 前端
 ├── docs/                # 文档
 ├── start-agentos.sh     # 一键启动脚本

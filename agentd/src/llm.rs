@@ -35,10 +35,16 @@ pub async fn stream_chat(
         "model": cfg.ollama_model,
         "messages": [{"role": "user", "content": prompt}],
         "stream": true,
-        // 原生接口可可靠关闭 qwen3 思考（OpenAI 端点不转发该参数）
-        "think": false,
-        // 硬性生成上限，双保险
-        "num_predict": 2048,
+        // 原生接口可控制 qwen3 思考；开启后 reasoning 经 Chunk::Reasoning
+        // 透传为 Thought 事件，前端以「💭 思考过程」折叠展示。
+        // 说明：当初为防 OOM 曾关闭思考，但那次 OOM 源于旧代码把整个响应
+        // 无限缓存进内存。当前 llm.rs 改用有界 channel（1024）且 reasoning
+        // 只转发、不落盘、不进 history/full，单 token 内存不再无限增长，
+        // 故可安全开启；num_predict 作为兜底上限防止生成失控。
+        // `think` 来自请求参数 / Config，默认开启。
+        "think": cfg.think,
+        // 硬性生成上限（含思考），双保险
+        "num_predict": 4096,
     });
 
     let resp = client.post(&url).json(&body).send().await?;

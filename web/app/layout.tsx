@@ -1,5 +1,6 @@
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import { SettingsProvider } from "@/components/SettingsContext";
 
 export const metadata = {
   title: "agentOS 控制台",
@@ -14,10 +15,12 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body>
-        <div className="app-shell">
-          <Sidebar />
-          <main className="main">{children}</main>
-        </div>
+        <SettingsProvider>
+          <div className="app-shell">
+            <Sidebar />
+            <main className="main">{children}</main>
+          </div>
+        </SettingsProvider>
       </body>
     </html>
   );

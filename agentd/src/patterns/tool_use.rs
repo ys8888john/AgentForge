@@ -86,6 +86,123 @@ fn extract_tool_call(text: &str) -> Option<(String, String)> {
     Some((name, args_val))
 }
 
+/// 兜底消毒：移除模型最终输出里残留的工具调用协议文本。
+///
+/// 本地 qwen3 偶尔会输出残缺 / 未闭合的 `[TOOL_CALL` 标记（如 `[TOOL_CALL`、
+/// `[TOOL_CALL[TOOL_CALL`），导致 `extract_tool_call` 解析失败时走到 `Done`
+/// 分支，若不做清理这些协议字眼会原样泄漏到用户界面。这里把它们（及紧随的
+/// JSON 参数体）一并抹掉，只保留模型真正的自然语言答复。
+/// 兜底消毒：从最终输出 / 回灌历史里剥离工具调用协议文本。
+///
+/// 触发 `extract_tool_call` 失败（格式错乱）时，残留的协议字眼会原样泄漏到
+/// 用户界面或污染历史。这里把它们（及紧随的 JSON 参数体）一并抹掉，只保留
+/// 模型真正的自然语言答复。
+///
+/// 必须覆盖的情形（qwen3 实测会出现）：
+/// - 完整块 `[TOOL_CALL]{...}[/TOOL_CALL]`
+/// - 残缺 / 未闭合的 `[TOOL` 前缀（被 SSE 把 `[TOOL_CALL]` 拆成 `[TOOL`+`CALL]`
+///   两 chunk，或模型直接截断所致）
+/// - 重复形式 `[TOOL[TOOL`、`[TOOL_CALL[TOOL_CALL`
+/// - 孤立闭合标签 `[/TOOL_CALL]`
+/// 跳过从 `start`（指向 `[`）开始的一个工具调用协议标记，返回标记之后的索引。
+///
+/// 兼容各种残缺 / 完整形式：
+/// - 完整 `[TOOL_CALL]{...}[/TOOL_CALL]`
+/// - 残缺前缀 `[TOOL`、`[TO`、`[/TO` 等（模型截断，或 SSE 把 `[TOOL_CALL]`
+///   拆成 `[TO`+`OL_CALL]` 等多 chunk 所致）
+fn skip_tool_marker(text: &str, start: usize) -> usize {
+    let bytes = text.as_bytes();
+    let mut j = start;
+    if j >= bytes.len() || bytes[j] != b'[' {
+        return (j + 1).min(bytes.len());
+    }
+    j += 1; // 跳过 '['
+    if j < bytes.len() && bytes[j] == b'/' {
+        j += 1; // 闭合标签的 '/'
+    }
+    // 跳过标签词 TOOL（及可能的残缺形式 TO / TOO）
+    if text[j..].starts_with("TOOL") {
+        j += 4;
+    } else if text[j..].starts_with("TOO") {
+        j += 3;
+    } else if text[j..].starts_with("TO") {
+        j += 2;
+    } else if text[j..].starts_with('T') {
+        j += 1;
+    }
+    // 跳过可能紧跟的 "_CALL"
+    if text[j..].starts_with("_CALL") {
+        j += 5;
+    }
+    // 跳过空白与闭合 ']'
+    while j < bytes.len() && matches!(bytes[j], b' ' | b'\n' | b'\t') {
+        j += 1;
+    }
+    if j < bytes.len() && bytes[j] == b']' {
+        j += 1;
+    }
+    // 跳过标签后可能紧贴的 JSON 参数体 {…}
+    while j < bytes.len() && matches!(bytes[j], b' ' | b'\n' | b'\t') {
+        j += 1;
+    }
+    if j < bytes.len() && bytes[j] == b'{' {
+        let mut depth = 0i32;
+        let mut k = j;
+        while k < bytes.len() {
+            match bytes[k] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        k += 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+            k += 1;
+        }
+        j = k;
+    }
+    j
+}
+
+/// 兜底消毒：从最终输出 / 回灌历史里剥离工具调用协议文本。
+///
+/// 触发 `extract_tool_call` 失败（格式错乱）时，残留的协议字眼会原样泄漏到
+/// 用户界面。这里把它们（及紧随的 JSON 参数体）一并抹掉，只保留模型真正的
+/// 自然语言答复。协议标记可能以任意残缺前缀出现（实测有 `[TOOL`、`[TO`、
+/// `[/TO` 等），故以 "[TO" / "[/TO" 为识别起点。
+fn sanitize_output(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        // 找下一个协议标记起点：以 "[TO" 或 "[/TO" 开头（取最先出现者）
+        let p1 = text[i..].find("[TO");
+        let p2 = text[i..].find("[/TO");
+        let pos = match (p1, p2) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        match pos {
+            None => {
+                out.push_str(&text[i..]);
+                break;
+            }
+            Some(m) => {
+                // 保留标记之前的正常文本
+                out.push_str(&text[i..i + m]);
+                // 跳过整个标记（可能残缺），继续扫描后续文本
+                i = skip_tool_marker(text, i + m);
+            }
+        }
+    }
+    out.trim().to_string()
+}
+
 /// 提取 `key:` 之后的标量值（容忍缺引号 / 单引号 / 双引号）。
 fn capture_after(s: &str, key: &str) -> Option<String> {
     let idx = s.find(key)? + key.len();
@@ -404,24 +521,65 @@ pub fn run(
                         llm::Chunk::Reasoning(r) => yield Ok(AgentEvent::Thought(r)),
                         llm::Chunk::Content(t) => {
                             full.push_str(&t);
-                            if full.contains("[TOOL_CALL]") {
-                                // 本段差值里若含有工具调用标记，只把标记之前
-                                // 已确认为是普通文本的部分补发出来，其余（含
-                                // [TOOL_CALL]…[/TOOL_CALL]）一律不显示。
+                            // 协议标记可能以任意残缺前缀出现（实测有 `[TOOL`、
+                            // `[TO`、`[/TO` 等：SSE 把 `[TOOL_CALL]` 拆成多 chunk，
+                            // 或模型直接截断），故以 "[TO" / "[/TO" 为触发点，
+                            // 宁可多拦不可漏放。
+                            let marker_hit = full.contains("[TO") || full.contains("[/TO");
+                            if marker_hit {
+                                // 本段差值里若含有工具调用协议标记（无论是否闭合），
+                                // 只把标记之前已确认为是普通文本的部分补发出来，
+                                // 其余（含 [TOOL_CALL]…[/TOOL_CALL] 或残缺 [TO 前缀）
+                                // 一律不显示，避免协议字眼泄漏到用户界面。
                                 let safe = &full[emitted..];
-                                if let Some(pos) = safe.find("[TOOL_CALL]") {
-                                    let before = &safe[..pos];
+                                let p1 = safe.find("[TO");
+                                let p2 = safe.find("[/TO");
+                                let pos = match (p1, p2) {
+                                    (Some(a), Some(b)) => Some(a.min(b)),
+                                    (Some(a), None) => Some(a),
+                                    (None, Some(b)) => Some(b),
+                                    (None, None) => None,
+                                };
+                                if let Some(pos) = pos {
+                                    // 扣留可能跨 chunk 的残缺标记起始（'['、'[/'），
+                                    // 等下一 chunk 到达确认其不是协议标记后再发射。
+                                    let mut end = pos;
+                                    let head = &safe[..pos];
+                                    if head.ends_with("[/") {
+                                        end = end.saturating_sub(2);
+                                    } else if head.ends_with('[') {
+                                        end = end.saturating_sub(1);
+                                    }
+                                    let before = &safe[..end];
                                     if !before.is_empty() {
                                         yield Ok(AgentEvent::Token(before.to_string()));
                                     }
+                                    emitted += end;
+                                } else {
+                                    emitted = full.len();
                                 }
-                                // 标记之前已出现时，本段整体不再显示
-                                emitted = full.len();
                             } else {
-                                // 尚未出现工具调用标记，按原样流式推送
-                                let len = t.len();
-                                yield Ok(AgentEvent::Token(t));
-                                emitted += len;
+                                // 尚未出现完整标记，但需防止标记被拆 chunk：若未发射
+                                // 尾部的 '[' / '[/' 恰好是标记起始的前半，先扣留不发射。
+                                let safe = &full[emitted..];
+                                let trim = if safe.ends_with("[/") {
+                                    2.min(safe.len())
+                                } else if safe.ends_with('[') {
+                                    1
+                                } else {
+                                    0
+                                };
+                                if trim > 0 {
+                                    let emit = &safe[..safe.len() - trim];
+                                    if !emit.is_empty() {
+                                        yield Ok(AgentEvent::Token(emit.to_string()));
+                                    }
+                                    emitted += emit.len();
+                                } else {
+                                    let len = t.len();
+                                    yield Ok(AgentEvent::Token(t));
+                                    emitted += len;
+                                }
                             }
                         }
                     },
@@ -448,14 +606,20 @@ pub fn run(
                     name: name.clone(),
                     output: out.clone(),
                 });
-                // 回灌历史
-                history.push_str(&format!("助手：{}\n", full));
+                // 回灌历史：只保留规范的工具调用协议行（重建），剥离模型在
+                // 工具轮夹带的啰嗦正文。这样既能让 ReAct 循环看到"自己调过
+                // 哪个工具、返回了什么"（否则会反复重调直至上限），又避免把
+                // 冗长独白喂回模型造成逐轮放大。
+                history.push_str(&format!(
+                    "助手：[TOOL_CALL]{{\"name\":\"{}\",\"arguments\":{}}}[/TOOL_CALL]\n",
+                    name, args
+                ));
                 history.push_str(&format!("工具 {} 返回：{}\n", name, out));
                 continue;
             }
 
-            // 没有工具调用 → 最终答案
-            yield Ok(AgentEvent::Done(full));
+            // 没有工具调用 → 最终答案（兜底消毒，抹掉残留的协议标记）
+            yield Ok(AgentEvent::Done(sanitize_output(&full)));
             break;
         }
     }
@@ -463,6 +627,7 @@ pub fn run(
 #[cfg(test)]
 mod eval_math_tests {
     use super::eval_math;
+    use super::sanitize_output;
 
     /// 回归测试：2026-07-29 曾因词法分析器漏写 i += 1 导致
     /// 任何含二元运算符的表达式死循环、进程 OOM 到 21GB。
@@ -488,5 +653,60 @@ mod eval_math_tests {
         assert!(eval_math("1/0").is_err());
         assert!(eval_math("abc").is_err());
         assert!(eval_math(&"1+".repeat(600)).is_err()); // 超长
+    }
+
+    // —— sanitize_output 回归测试：确保各类协议残留都被剥离，不泄漏到界面 ——
+
+    #[test]
+    fn sanitize_strips_complete_block() {
+        assert_eq!(
+            sanitize_output("答案是 [TOOL_CALL]{\"name\":\"x\",\"arguments\":{}}[/TOOL_CALL] 完成"),
+            "答案是 完成"
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_json_args() {
+        assert_eq!(
+            sanitize_output(
+                "[TOOL_CALL]{\"name\":\"calculator\",\"arguments\":{\"expr\":\"1+2\"}}[/TOOL_CALL]结果"
+            ),
+            "结果"
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_truncated_prefix() {
+        // 模型被 SSE 拆 chunk 或截断产生的残缺 [TOOL
+        assert_eq!(
+            sanitize_output("[TOOL 调用了工具然后 结果是 42"),
+            "调用了工具然后 结果是 42"
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_repeated_and_closing() {
+        assert_eq!(
+            sanitize_output("[TOOL[TOOL[/TOOL_CALL]结果 42"),
+            "结果 42"
+        );
+    }
+
+    #[test]
+    fn sanitize_strips_partial_to() {
+        // 模型截断到 "[TO" 前缀（如 SSE 把 [TOOL_CALL] 拆成 [TO + OL_CALL]）
+        assert_eq!(sanitize_output("[TO[TO结果 42"), "结果 42");
+        assert_eq!(
+            sanitize_output("[TO调用了工具 结果是 42"),
+            "调用了工具 结果是 42"
+        );
+    }
+
+    #[test]
+    fn sanitize_keeps_plain_text() {
+        assert_eq!(
+            sanitize_output("只计算 1+2 等于 3，无需工具"),
+            "只计算 1+2 等于 3，无需工具"
+        );
     }
 }

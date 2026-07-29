@@ -24,6 +24,7 @@ use patterns::routing::Route;
 use patterns::parallelization::Worker;
 use patterns::reflection::{ReflectionConfig, Critic};
 use patterns::tool_use::{ToolUseConfig, Tool};
+use patterns::planning::PlanningConfig;
 use state::AppState;
 
 #[tokio::main]
@@ -173,6 +174,15 @@ fn parse_reflection(payload: &Value) -> ReflectionConfig {
     ReflectionConfig { generator_prompt, critics, max_iter }
 }
 
+/// 从请求体解析规划模式配置（Ch6 规划用）：max_steps（计划步骤上限）
+fn parse_planning(payload: &Value) -> PlanningConfig {
+    let max_steps = payload
+        .get("max_steps")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(5) as usize;
+    PlanningConfig { max_steps }
+}
+
 /// 从请求体解析工具调用配置（Ch5 工具调用用）：tools / max_rounds
 fn parse_tool_use(payload: &Value) -> ToolUseConfig {
     let tools = payload
@@ -216,6 +226,7 @@ fn parse_tool_use(payload: &Value) -> ToolUseConfig {
 /// - `"parallelization"`      → 第三章并行化，多 worker 并行后汇总
 /// - `"reflection"`           → 第四章反思，生成→并行批评→修订，迭代多轮
 /// - `"tool_use"`             → 第五章工具调用，模型生成→调工具→回灌→续答
+/// - `"planning"`             → 第六章规划，模型先定计划→逐步执行→汇总
 ///
 /// 内部统一产出 `AgentEvent` 流，再映射成 SSE 事件推给前端。
 async fn run_task(
@@ -233,7 +244,15 @@ async fn run_task(
         .and_then(|v| v.as_str())
         .unwrap_or("single")
         .to_string();
-    let cfg = state.config.clone();
+    let cfg = {
+        let mut c = (*state.config).clone();
+        // 前端可按请求开关「思考」（think）；缺省开启，保持思考过程可视化。
+        c.think = payload
+            .get("think")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        std::sync::Arc::new(c)
+    };
 
     // 构造统一的 AgentEvent 流
     let event_stream: Pin<
@@ -253,6 +272,9 @@ async fn run_task(
     } else if pattern == "tool_use" {
         let tu = parse_tool_use(&payload);
         Box::pin(patterns::tool_use::run(tu, input, cfg))
+    } else if pattern == "planning" {
+        let pc = parse_planning(&payload);
+        Box::pin(patterns::planning::run(pc, input, cfg))
     } else {
         match llm::stream_chat(&cfg, &input).await {
             Ok(s) => Box::pin(s.map(|r| {
@@ -273,6 +295,9 @@ async fn run_task(
             Ok(ev) => match ev {
                 AgentEvent::Step { index, name } => {
                     Ok(Event::default().event("step").data(format!("{}:{}", index, name)))
+                }
+                AgentEvent::Plan { index, name } => {
+                    Ok(Event::default().event("plan").data(format!("{}:{}", index, name)))
                 }
                 AgentEvent::Route { name, raw } => {
                     Ok(Event::default().event("route").data(format!("{}\t{}", name, raw)))

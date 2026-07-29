@@ -1,7 +1,7 @@
 # agentOS 开发计划与进度总览（交接文档）
 
 > 用途：给**新会话/新接手者**看一眼就能恢复上下文，知道项目是什么、做到哪了、怎么跑、坑在哪、下一步做什么。
-> 详细设计见 `docs/architecture.md`；各章实现细节见 `docs/ch1-prompt-chaining.md`～`docs/ch5-tool-use.md`。
+> 详细设计见 `docs/architecture.md`；各章实现细节见 `docs/ch1-prompt-chaining.md`～`docs/ch6-planning.md`。
 
 ---
 
@@ -17,13 +17,13 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 |----|-----------|------|
 | 后端 | Rust + axum 0.7 + tokio | 目录 `agentOS/agentd` |
 | 构建 | `cd agentOS/agentd && CARGO_BUILD_JOBS=4 cargo build` | 防打满资源 |
-| 启动 | `pkill -f 'debug/agentd$'; sleep 1; cd agentOS/agentd && setsid ./target/debug/agentd > daemon.log 2>&1 < /dev/null &` | **必须先在 8090 释放旧进程**；用 `setsid` 让 daemon 彻底脱离会话，否则执行命令工具会等待 daemon 直到 300s 超时 |
+| 启动 | `pkill -x agentd; sleep 1; cd agentOS/agentd && setsid ./target/debug/agentd > daemon.log 2>&1 < /dev/null &` | **必须先在 8090 释放旧进程**；用 `setsid` 让 daemon 彻底脱离会话，否则执行命令工具会等待 daemon 直到 300s 超时 |
 | 后端端口 | **8090**（8080 被 `python http.server` pid 182 占用，**勿杀**） | `cfg.listen_addr` 在 `.env` |
 | LLM | 本地 Ollama `qwen3:8b` | `http://127.0.0.1:11434/v1/chat/completions`（OpenAI 兼容，stream） |
 | 前端 | Next.js 14 + React 18 + TS | 目录 `agentOS/web` |
 | 前端安装 | `cd agentOS/web && pnpm install` | 见坑 2、3 |
 | 前端启动 | `pnpm dev`（端口 3000） | 宝塔风格面板 |
-| 前端地址 | `http://localhost:3000` | 模式：单次对话 / 提示链 / 路由 / 并行化 / 反思 / 工具调用 |
+| 前端地址 | `http://localhost:3000` | 模式：单次对话 / 提示链 / 路由 / 并行化 / 反思 / 工具调用 / 规划 |
 | 镜像源 | `npm/pnpm config set registry https://registry.npmmirror.com/` | 见坑 1 |
 
 ---
@@ -38,11 +38,12 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M2-Ch3 并行化 | ✅ 完成 | `patterns/parallelization.rs`，`select_all` 并发 + 汇总，**新增 `Worker` 事件** |
 | M2-Ch4 反思 | ✅ 完成 | `patterns/reflection.rs`，生成→并行批评→修订迭代，**新增 `Reflect`/`Revision` 事件** |
 | M2-Ch5 工具调用 | ✅ 完成 | `patterns/tool_use.rs`，提示式工具调用循环，**新增 `ToolCall`/`ToolResult` 事件**，内置 calculator/current_time |
-| M2-Ch6~Ch7 | ⬜ 待做 | 规划 / 多智能体 |
+| M2-Ch6 规划 | ✅ 完成 | `patterns/planning.rs`，三阶段（制定计划→按步执行→汇总），**新增 `Plan` 事件** |
+| M2-Ch7 多智能体 | ⬜ 待做 | 多 Agent 协作（辩论/分工） |
 | M3 记忆与工具 | ⬜ 待做 | `tools/` `memory/` MCP（工具的「注册表」机制已在 Ch5 打好基础） |
 | M4 生产化 | ⬜ 待做 | 异常恢复 / 人在回路 / RAG |
 | M5 多智能体 | ⬜ 待做 | A2A / 护栏 / 评估 |
-| 前端面板 | 🟡 部分 | 工作台六种模式可用；侧栏 **会话/智能体/设置 仍是占位空壳** |
+| 前端面板 | 🟡 部分 | 工作台七种模式可用；**设置页已完成**（think/思考展开/最大轮数），侧栏 **会话/智能体 仍是占位空壳** |
 
 ---
 
@@ -56,13 +57,13 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M2 基础模式 | **Ch3** | 并行化 Parallelization | `patterns/parallelization.rs` | ✅ |
 | M2 基础模式 | **Ch4** | 反思 Reflection | `patterns/reflection.rs` | ✅ |
 | M2 基础模式 | **Ch5** | 工具调用 Tool Use | `patterns/tool_use.rs` | ✅ |
-| M2 基础模式 | Ch6 | 规划 Planning | `patterns/planning.rs` | ⬜ |
+| M2 基础模式 | **Ch6** | 规划 Planning | `patterns/planning.rs` | ✅ |
 | M2 基础模式 | Ch7 | 多智能体 Multi-Agent | `patterns/multi_agent.rs` | ⬜ |
 | M3 记忆与工具 | Ch5/Ch8/Ch10 | 工具注册 + 记忆 + MCP | `tools/` `memory/` | ⬜ |
 | M4 生产化 | Ch12-14 | 异常恢复 / 人在回路 / RAG | — | ⬜ |
 | M5 多智能体 | Ch15-21 | A2A / 护栏 / 评估 | — | ⬜ |
 
-> 建议按书序推进 M2 的 Ch5→Ch7，每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
+> 建议按书序推进 M2 的 Ch7（下一步），每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
 
 ---
 
@@ -74,19 +75,22 @@ agentOS/
 │   ├── main.rs              # 入口 + axum 路由 + run_task 按 pattern 分发 + SSE 映射
 │   ├── config.rs            # 配置（.env：LISTEN_ADDR / OLLAMA_BASE_URL / OLLAMA_MODEL）
 │   ├── llm.rs               # 流式调用 Ollama；产出 Chunk::Content / Chunk::Reasoning
-│   ├── events.rs            # AgentEvent 枚举（Step/Route/Worker/Reflect/Revision/ToolCall/ToolResult/Token/Thought/Done/Error）
+│   ├── events.rs            # AgentEvent 枚举（Step/Route/Worker/Reflect/Revision/ToolCall/ToolResult/Plan/Token/Thought/Done/Error）
 │   └── patterns/
-│       ├── mod.rs           # 声明 prompt_chaining / routing / parallelization / reflection / tool_use
+│       ├── mod.rs           # 声明 prompt_chaining / routing / parallelization / reflection / tool_use / planning
 │       ├── prompt_chaining.rs   # Ch1 ✅
 │       ├── routing.rs           # Ch2 ✅（含描述增强）
 │       ├── parallelization.rs   # Ch3 ✅
 │       ├── reflection.rs        # Ch4 ✅
-│       └── tool_use.rs          # Ch5 ✅（提示式工具调用 + 内置 calculator/current_time）
+│       ├── tool_use.rs          # Ch5 ✅（提示式工具调用 + 内置 calculator/current_time）
+│       └── planning.rs          # Ch6 ✅（三阶段规划 + Plan 事件）
 ├── web/
-│   ├── app/page.tsx         # 工作台（六种模式 + 步骤/路由/worker/批评者/工具编辑器 + 流式输出）
+│   ├── app/page.tsx         # 工作台（七种模式 + 步骤/路由/worker/批评者/工具编辑器/规划 + 流式输出）
 │   ├── app/globals.css      # 宝塔风格样式
-│   ├── app/layout.tsx       # 侧栏 + 主区
+│   ├── app/layout.tsx       # 侧栏 + 主区 + SettingsProvider
 │   ├── app/Sidebar.tsx      # 侧栏导航（工作台/会话/智能体/设置）
+│   ├── app/settings/page.tsx# 设置页（think / 思考默认展开 / 工具调用最大轮数）
+│   ├── components/SettingsContext.tsx  # 全局设置（localStorage 持久化）
 │   └── lib/sse.ts           # 前端 SSE 客户端（fetch + ReadableStream 手解）
 └── docs/
     ├── architecture.md          # 总体架构设计（分层、通信契约）
@@ -96,11 +100,12 @@ agentOS/
     ├── ch3-parallelization.md   # Ch3 总结
     ├── ch4-reflection.md        # Ch4 总结
     ├── ch5-tool-use.md          # Ch5 总结
+    ├── ch6-planning.md          # Ch6 总结（规划三阶段 + Plan 事件）
     └── ROADMAP.md               # 本文
 ```
 
 ### 事件流约定（前后端契约）
-- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`token`/`thought`/`done`/`error`
+- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`token`/`thought`/`done`/`error`
 - 前端 `lib/sse.ts` 解析后按 `ev.event` 渲染
 - **新增 Pattern 时**：加 `AgentEvent` 变体 → `main.rs` 映射 SSE → 前端 `page.tsx` 渲染，三步缺一不可
 
@@ -121,13 +126,17 @@ agentOS/
 6. **后台命令超时（重要）**：用 `execute_command` 启动**长期运行**的 daemon 时，
    即使 `nohup ... & disown`，工具仍会等待 daemon 子进程直到 **300s 超时**取消（并可能连 daemon 一起杀掉）。
    **正确做法**：用 `setsid ./target/debug/agentd > daemon.log 2>&1 < /dev/null &` 让 daemon 彻底脱离会话；
-   且 `pkill -f target/debug/agentd` 会**误杀执行命令的 shell 自身**（其命令行也含该串），
-   应改用 `pkill -f 'debug/agentd$'` 或按 pid 杀。
+   杀旧进程**必须按精确进程名** `pkill -x agentd`，不要用 `pkill -f 'debug/agentd$'`
+   （该串也会匹配执行命令的 bash shell 自身，导致 shell 被杀、工具 300s 超时假死）。实在不行就 `kill -9 <pid>`。
 7. **思考过程分类阶段要丢弃**：路由的分类调用里 `Chunk::Reasoning` 直接忽略，
    否则思考内容会污染「只回类别名」的判断。
 8. **Ch5 工具调用格式依赖模型遵循度**：qwen3 对 `[TOOL_CALL]` 强约束格式基本遵循，但单次往往只调用一个工具；
    若需验证多个工具，建议用单一问题分别测（如「算 123*456」测 calculator、「现在几点」测 current_time）。
    calculator 求值器为手写 shunting-yard，**不使用任何外部命令**，杜绝命令注入。
+9. **`[TOOL_CALL]` 协议标记可能跨 SSE 分块截断**：模型或流会把 `[TOOL_CALL]` 拆成 `[TO`+`OL_CALL`，
+   甚至只输出 `[TO`/`[TOOL`/`[/TO`。`tool_use.rs` 的流式守卫按最短前缀 `[TO`/`[/TO` 拦截，
+   并在分块边界扣留尾部的 `[`/`[/` 暂不下发；`sanitize_output` 会剥掉任意长度的标记及其 JSON 参数。
+   **历史回灌务必用后端重建的规范 `[TOOL_CALL]{...}` 行**，不要回灌原始 `full`，否则模型会反复调工具直到 `max_rounds`。
 
 ---
 
@@ -135,10 +144,10 @@ agentOS/
 
 | 优先级 | 动作 | 说明 |
 |--------|------|------|
-| 高 | **实现 Ch6 规划（Planning）** | 按书序，让 Agent 先制定步骤计划再执行。新建 `planning.rs` + 前端「规划」模式 |
-| 中 | **补侧栏 会话/智能体/设置 页面** | 目前空壳，让面板更完整 |
+| 高 | **实现 Ch7 多智能体（Multi-Agent）** | 按书序，多个 Agent 协作（辩论/分工）。新建 `multi_agent.rs` + 前端「多智能体」模式 |
+| 中 | **补侧栏 会话/智能体 页面** | 设置页已完成；会话/智能体仍是空壳，让面板更完整 |
 | 中 | **路由健壮性增强** | 分类器输出 JSON（含 reason）、兜底/拒识路由 |
-| 低 | **每章沉淀 docs/chN-*.md** | 保持「学一章写一章」节奏 |
+| 低 | **每章沉淀 docs/chN-*.md** | 保持「学一章写一章」节奏（Ch1~Ch6 已完成） |
 
 ---
 
@@ -148,8 +157,8 @@ agentOS/
 # 1) 后端编译
 cd agentOS/agentd && CARGO_BUILD_JOBS=4 cargo build
 
-# 2) 重启 daemon（setsid 脱离会话 + 按结尾锚定杀旧进程）
-pkill -f 'debug/agentd$'; sleep 1
+# 2) 重启 daemon（setsid 脱离会话 + 按精确进程名杀旧进程）
+pkill -x agentd; sleep 1
 cd agentOS/agentd && setsid ./target/debug/agentd > daemon.log 2>&1 < /dev/null &
 
 # 3) 冒烟：单次对话
@@ -182,7 +191,12 @@ curl -s -N -X POST http://localhost:8090/api/sessions/t/run -H 'Content-Type: ap
        "tools":[{"name":"calculator","description":"计算数学表达式，参数 expr"},
                 {"name":"current_time","description":"返回当前本地时间，无参数"}]}' --max-time 200 | grep -E "^event:"
 
-# 8) 前端
+# 8) 规划（Ch6）
+curl -s -N -X POST http://localhost:8090/api/sessions/t/run -H 'Content-Type: application/json' \
+  -d '{"input":"帮我规划一个杭州周边两天一夜的旅行","pattern":"planning","max_steps":3}' \
+  --max-time 150 | grep -E "^event:" | sort | uniq -c
+
+# 9) 前端
 curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 ```
 
@@ -198,7 +212,8 @@ curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 - `docs/ch3-parallelization.md` — Ch3 总结
 - `docs/ch4-reflection.md` — Ch4 总结
 - `docs/ch5-tool-use.md` — Ch5 总结
+- `docs/ch6-planning.md` — Ch6 总结（规划三阶段 + Plan 事件）
 
 ---
 
-*最后更新：2026-07-24。状态：M1+M2(Ch1,Ch2,Ch3,Ch4,Ch5) 完成，前端工作台六种模式可用，侧栏三页待补。*
+*最后更新：2026-07-29。状态：M1+M2(Ch1~Ch6) 完成，前端工作台七种模式可用，设置页完成，侧栏 会话/智能体 待补，下一步 Ch7 多智能体。*
