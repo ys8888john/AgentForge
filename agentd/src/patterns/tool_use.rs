@@ -40,14 +40,14 @@ pub struct ToolUseConfig {
 }
 
 /// 内置工具表：(name, 描述)。执行器见 `execute_tool`。
-const BUILTIN: &[(&str, &str)] = &[
+pub const BUILTIN: &[(&str, &str)] = &[
     ("calculator", "计算数学表达式，参数 expr（如 \"1+2*3\"）"),
     ("current_time", "返回当前本地时间，无参数"),
 ];
 
 /// 提取模型输出中的工具调用标记。
 /// 返回 (工具名, arguments 的 JSON 字符串)。找不到或解析失败返回 None。
-fn extract_tool_call(text: &str) -> Option<(String, String)> {
+pub fn extract_tool_call(text: &str) -> Option<(String, String)> {
     let start = text.find("[TOOL_CALL]")?;
     let end = text.find("[/TOOL_CALL]")?;
     if end <= start {
@@ -173,7 +173,7 @@ fn skip_tool_marker(text: &str, start: usize) -> usize {
 /// 用户界面。这里把它们（及紧随的 JSON 参数体）一并抹掉，只保留模型真正的
 /// 自然语言答复。协议标记可能以任意残缺前缀出现（实测有 `[TOOL`、`[TO`、
 /// `[/TO` 等），故以 "[TO" / "[/TO" 为识别起点。
-fn sanitize_output(text: &str) -> String {
+pub fn sanitize_output(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
@@ -248,7 +248,7 @@ fn capture_braced(s: &str, key: &str) -> Option<String> {
 }
 
 /// 执行工具。参数 `args` 是 arguments 对象的 JSON 字符串。
-fn execute_tool(name: &str, args: &str) -> String {
+pub fn execute_tool(name: &str, args: &str) -> String {
     match name {
         "calculator" => {
             let parsed: serde_json::Value = match serde_json::from_str(args) {

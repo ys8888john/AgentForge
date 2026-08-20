@@ -76,6 +76,20 @@ body {
   font-size: 13px;
   color: #8a90a0;
 }
+.new-session {
+  margin-left: auto;
+  border: 1px solid #d9dee8;
+  background: #f5f7fb;
+  color: #2d6cdf;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 5px 12px;
+  cursor: pointer;
+}
+.new-session:hover {
+  background: #e9f0ff;
+}
 .config {
   margin: 16px 0;
 }
@@ -286,6 +300,108 @@ body {
   align-items: center;
   border-top: none;
   padding: 4px 0;
+}
+.agent-label {
+  color: #8b3df0;
+  font-weight: 600;
+  font-size: 13px;
+  background: #f3ebff;
+  border: 1px dashed #8b3df0;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+}
+.memory-label {
+  color: #1f8a8a;
+  font-weight: 600;
+  font-size: 13px;
+  background: #e6f7f7;
+  border: 1px dashed #1f8a8a;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
+.profile-label {
+  color: #8a5a1f;
+  font-weight: 600;
+  font-size: 13px;
+  background: #fbf2e3;
+  border: 1px solid #d9a85a;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
+.recovery-label {
+  color: #5a3a8a;
+  font-weight: 600;
+  font-size: 13px;
+  background: #f1ecfa;
+  border: 1px dashed #9a6ad9;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
+.hitl-label {
+  color: #8a5a1a;
+  font-weight: 600;
+  font-size: 13px;
+  background: #faf3ec;
+  border: 1px dashed #d99a3a;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
+/* HITL 审批面板 */
+.hitl-confirm {
+  margin: 12px 0;
+  padding: 12px 14px;
+  background: #fff7ec;
+  border: 1px solid #e7b56a;
+  border-radius: 10px;
+}
+.hitl-confirm-head {
+  font-weight: 700;
+  color: #8a5a1a;
+  margin-bottom: 8px;
+}
+.hitl-confirm-actions {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.hitl-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #fff;
+}
+.hitl-btn.approve { background: #1a7f43; }
+.hitl-btn.reject { background: #c0392b; }
+.hitl-btn.edit { background: #2d6cdf; }
+.hitl-confirm-edit {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hitl-confirm-edit-title {
+  font-size: 12px;
+  color: #8a5a1a;
+}
+.hitl-edit-input {
+  flex: 1;
+  min-width: 200px;
+  border: 1px solid #e7b56a;
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 13px;
 }
 .tool-result-label {
   color: #1a7f43;

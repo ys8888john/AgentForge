@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { createSession, runTask } from "@/lib/sse";
+import { createSession, runTask, API_BASE } from "@/lib/sse";
 import { useSettings } from "@/components/SettingsContext";
 
 type Block = {
@@ -14,6 +14,11 @@ type Block = {
     | "tool_call"
     | "tool_result"
     | "plan"
+    | "agent"
+    | "memory"
+    | "profile"
+    | "recovery"
+    | "hitl"
     | "thought"
     | "token"
     | "done"
@@ -28,7 +33,14 @@ type Mode =
   | "parallelization"
   | "reflection"
   | "tool_use"
-  | "planning";
+  | "planning"
+  | "multi_agent"
+  | "memory"
+  | "learning"
+  | "goal_setting"
+  | "mcp"
+  | "recovery"
+  | "hitl";
 
 export default function Page() {
   const [mode, setMode] = useState<Mode>("single");
@@ -67,9 +79,27 @@ export default function Page() {
     { name: "current_time", description: "返回当前本地时间，无参数" },
   ]);
   const [maxSteps, setMaxSteps] = useState(5);
+  const [agents, setAgents] = useState<{ name: string; persona: string }[]>([
+    { name: "科学家", persona: "你是一位严谨的自然科学工作者，用事实、数据与机制解释问题，指出证据与不确定性。" },
+    { name: "产品经理", persona: "你是一位注重用户价值与落地的产品经理，从需求、场景、可行性与权衡的角度给出看法。" },
+    { name: "风险官", persona: "你是一位风险与伦理审查者，专挑潜在隐患、副作用、伦理与可持续性风险，给出警示。" },
+  ]);
+  const [recallK, setRecallK] = useState(5);
+  const [maxRounds, setMaxRounds] = useState(3);
+  const [serverCommand, setServerCommand] = useState(
+    "python3 /root/workspace/agentOS/agentd/mcp_servers/weather_mcp_server.py"
+  );
+  const [innerPattern, setInnerPattern] = useState("tool_use");
+  const [maxRetries, setMaxRetries] = useState(3);
+  const [confirmAll, setConfirmAll] = useState(true);
+  // HITL 待确认块：非空时渲染审批按钮，供用户批准/驳回/改写
+  const [confirmBlock, setConfirmBlock] = useState<{ sessionId: string; text: string } | null>(null);
+  const [editArgs, setEditArgs] = useState("");
   const [output, setOutput] = useState<Block[]>([]);
   const [running, setRunning] = useState(false);
   const [sessionId, setSessionId] = useState("");
+  // 当前运行使用的会话 id（与上面的 state 同步，但用 ref 避免闭包/异步读到旧值）
+  const runSid = useRef("");
   const tokenAcc = useRef("");
   const thoughtAcc = useRef("");
   const outRef = useRef<HTMLDivElement>(null);
@@ -84,13 +114,14 @@ export default function Page() {
     setRunning(true);
     tokenAcc.current = "";
     thoughtAcc.current = "";
+    setConfirmBlock(null);
+    setEditArgs("");
     setOutput([]);
     try {
-      let sid = sessionId;
-      if (!sid) {
-        sid = await createSession();
-        setSessionId(sid);
-      }
+      // 每次运行都用全新会话，避免 HITL 单槽决策残留导致"批准后无反应"的脏状态
+      const sid = await createSession();
+      setSessionId(sid);
+      runSid.current = sid;
       await runTask(
         sid,
         {
@@ -105,6 +136,23 @@ export default function Page() {
           tools: mode === "tool_use" ? tools : undefined,
           max_rounds: mode === "tool_use" ? settings.maxRounds : undefined,
           max_steps: mode === "planning" ? maxSteps : undefined,
+          agents: mode === "multi_agent" ? agents : undefined,
+          recall_k: mode === "memory" || mode === "learning" ? recallK : undefined,
+          max_steps: mode === "goal_setting" ? maxSteps : undefined,
+          max_rounds: mode === "goal_setting" ? maxRounds : undefined,
+          server_command:
+            mode === "mcp" || (mode === "hitl" && innerPattern === "mcp")
+              ? serverCommand
+              : undefined,
+          timeout_secs:
+            mode === "mcp" || (mode === "hitl" && innerPattern === "mcp")
+              ? 30
+              : undefined,
+          inner_pattern:
+            mode === "recovery" || mode === "hitl" ? innerPattern : undefined,
+          max_retries: mode === "recovery" ? maxRetries : undefined,
+          confirm_all: mode === "hitl" ? confirmAll : undefined,
+          max_rounds: mode === "hitl" ? 5 : undefined,
           think: settings.think,
         },
         (ev) => {
@@ -148,6 +196,64 @@ export default function Page() {
               ...p,
               { kind: "plan", text: `计划 ${idx} · ${name}` },
             ]);
+          } else if (ev.event === "agent") {
+            const [idx, name] = ev.data.split(":");
+            setOutput((p) => [
+              ...p,
+              { kind: "agent", text: `智能体 ${idx} · ${name}` },
+            ]);
+          } else if (ev.event === "memory") {
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const text = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            const label =
+              phase === "recall" ? `🧠 召回记忆` : "💾 存入记忆";
+            setOutput((p) => [
+              ...p,
+              { kind: "memory", text: `${label}\n${text}` },
+            ]);
+          } else if (ev.event === "profile") {
+            setOutput((p) => [
+              ...p,
+              { kind: "profile", text: `🎯 学到的新偏好\n${ev.data}` },
+            ]);
+          } else if (ev.event === "recovery") {
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const text = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            const label =
+              phase === "retry"
+                ? "🔁 重试"
+                : phase === "recover"
+                ? "🩹 恢复"
+                : "⤵️ 降级";
+            setOutput((p) => [
+              ...p,
+              { kind: "recovery", text: `${label}\n${text}` },
+            ]);
+          } else if (ev.event === "hitl") {
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const text = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            // confirm 阶段：保存挂起的"待确认块"，渲染审批按钮
+            // 注意：必须用本次 run 的局部 sid，不能用组件 state 的 sessionId
+            // （后者是异步更新前的值，会导致 decision 发到错误会话而流永久挂起）
+            if (phase === "confirm") {
+              setConfirmBlock({ sessionId: sid, text });
+            } else {
+              const label =
+                phase === "approved"
+                  ? "✅ 已批准"
+                  : phase === "rejected"
+                  ? "⛔ 已驳回"
+                  : phase === "edited"
+                  ? "✏️ 已改写"
+                  : "➡️ 自动放行";
+              setOutput((p) => [
+                ...p,
+                { kind: "hitl", text: `${label}\n${text}` },
+              ]);
+            }
           } else if (ev.event === "route") {
             const [name, raw] = ev.data.split("\t");
             setOutput((p) => [
@@ -213,11 +319,51 @@ export default function Page() {
     setTools((c) => c.map((cr, j) => (j === i ? { ...cr, [key]: val } : cr)));
   }
 
+  function updateAgent(i: number, key: "name" | "persona", val: string) {
+    setAgents((c) => c.map((cr, j) => (j === i ? { ...cr, [key]: val } : cr)));
+  }
+
+  // HITL：把决策（approve/reject/edit）回传给 daemon，唤醒挂起的工具确认
+  async function sendHitlDecision(action: string, content?: string) {
+    if (!confirmBlock) return;
+    // 优先用本次 run 的真实 sid（ref，绝不为空/旧值），兜底用 confirmBlock 与 state
+    const sid = runSid.current || confirmBlock.sessionId || sessionId;
+    if (!sid) return;
+    const body: { action: string; content?: string } = { action };
+    if (content !== undefined) body.content = content;
+    try {
+      const res = await fetch(`${API_BASE}/api/sessions/${sid}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      // 若返回非成功，打印以便排查（之前曾因 sid 为空导致 404）
+      if (!res.ok) {
+        console.error("HITL decision failed:", res.status, await res.text());
+      }
+    } catch (e) {
+      console.error("HITL decision error:", e);
+    }
+    setConfirmBlock(null);
+    setEditArgs("");
+  }
+
   return (
     <div className="workspace">
       <header className="topbar">
         <h1>工作台</h1>
         <span className="conn">会话：{sessionId || "未创建"}</span>
+        <button
+          className="new-session"
+          onClick={() => {
+            setSessionId("");
+            setConfirmBlock(null);
+            setEditArgs("");
+            setOutput([]);
+          }}
+        >
+          新建会话
+        </button>
       </header>
 
       <section className="config">
@@ -263,6 +409,48 @@ export default function Page() {
             onClick={() => setMode("planning")}
           >
             规划
+          </button>
+          <button
+            className={mode === "multi_agent" ? "mode active" : "mode"}
+            onClick={() => setMode("multi_agent")}
+          >
+            多智能体
+          </button>
+          <button
+            className={mode === "memory" ? "mode active" : "mode"}
+            onClick={() => setMode("memory")}
+          >
+            记忆
+          </button>
+          <button
+            className={mode === "learning" ? "mode active" : "mode"}
+            onClick={() => setMode("learning")}
+          >
+            学习适应
+          </button>
+          <button
+            className={mode === "goal_setting" ? "mode active" : "mode"}
+            onClick={() => setMode("goal_setting")}
+          >
+            目标设定
+          </button>
+          <button
+            className={mode === "mcp" ? "mode active" : "mode"}
+            onClick={() => setMode("mcp")}
+          >
+            MCP 工具
+          </button>
+          <button
+            className={mode === "recovery" ? "mode active" : "mode"}
+            onClick={() => setMode("recovery")}
+          >
+            异常恢复
+          </button>
+          <button
+            className={mode === "hitl" ? "mode active" : "mode"}
+            onClick={() => setMode("hitl")}
+          >
+            人在回路
           </button>
         </div>
 
@@ -525,6 +713,297 @@ export default function Page() {
             </label>
           </div>
         )}
+
+        {mode === "multi_agent" && (
+          <div className="steps">
+            <div className="routing-hint">
+              多个扮演不同角色的 Agent 会就同一任务并行给出各自视角（科学家 / 产品经理 / 风险官……），最后由「汇总 Agent」综合成最终答复。可增删角色、修改其设定。
+            </div>
+            {agents.map((ag, i) => (
+              <div className="step" key={i}>
+                <div className="step-head">
+                  <input
+                    className="step-name"
+                    value={ag.name}
+                    onChange={(e) => updateAgent(i, "name", e.target.value)}
+                    placeholder="角色名"
+                  />
+                  <button
+                    className="step-del"
+                    onClick={() => setAgents((c) => c.filter((_, j) => j !== i))}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <textarea
+                  className="step-prompt"
+                  value={ag.persona}
+                  onChange={(e) => updateAgent(i, "persona", e.target.value)}
+                  rows={2}
+                  placeholder="角色设定（视角 / 身份 / 专业背景）"
+                />
+              </div>
+            ))}
+            <button
+              className="step-add"
+              onClick={() =>
+                setAgents((c) => [
+                  ...c,
+                  { name: `角色${c.length + 1}`, persona: "" },
+                ])
+              }
+            >
+              + 添加角色
+            </button>
+          </div>
+        )}
+
+        {mode === "memory" && (
+          <div className="steps">
+            <div className="routing-hint">
+              带长期记忆的对话：每轮先召回本会话的历史记忆（🧠），再结合记忆回答，最后把本轮写入记忆（💾）。同一会话多轮对话即可体现"记得你之前说过什么"。记忆仅在当前 daemon 运行期有效（重启清空）。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">召回条数</div>
+                <div className="setting-desc">
+                  每轮最多召回多少条历史记忆作为背景（默认 5）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={1}
+                max={20}
+                value={recallK}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setRecallK(Number.isFinite(v) ? Math.min(20, Math.max(1, v)) : 1);
+                }}
+              />
+            </label>
+          </div>
+        )}
+
+        {mode === "learning" && (
+          <div className="steps">
+            <div className="routing-hint">
+              学习适应 = 记忆 + 偏好画像：每轮先召回历史记忆、结合"已知偏好画像"回答，再调用模型从本轮交互中提炼新的可复用偏好（🎯），写入画像。多轮之后模型会主动套用你沉淀下来的习惯。记忆与画像仅在当前 daemon 运行期有效（重启清空）。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">召回条数</div>
+                <div className="setting-desc">
+                  每轮最多召回多少条历史记忆作为背景（默认 5）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={1}
+                max={20}
+                value={recallK}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setRecallK(Number.isFinite(v) ? Math.min(20, Math.max(1, v)) : 1);
+                }}
+              />
+            </label>
+          </div>
+        )}
+
+        {mode === "goal_setting" && (
+          <div className="steps">
+            <div className="routing-hint">
+              目标设定 = 规划 + 闭环自检：只给一个高层目标，agent 会自主「规划 → 执行 → 自检目标是否达成」，未达成则带着已有进展进入下一轮重新规划，直到目标满足或达到最大轮次。每一轮的计划会显示（📋），每轮自检用（🔍 第 N 轮自检）标记。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">单轮计划上限</div>
+                <div className="setting-desc">
+                  每轮规划最多包含几个步骤（默认 5）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={1}
+                max={12}
+                value={maxSteps}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setMaxSteps(Number.isFinite(v) ? Math.min(12, Math.max(1, v)) : 1);
+                }}
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">最大轮次</div>
+                <div className="setting-desc">
+                  规划→执行→自检 算一轮，最多迭代几轮（默认 3，防无限循环）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={1}
+                max={10}
+                value={maxRounds}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setMaxRounds(Number.isFinite(v) ? Math.min(10, Math.max(1, v)) : 1);
+                }}
+              />
+            </label>
+          </div>
+        )}
+
+        {mode === "mcp" && (
+          <div className="steps">
+            <div className="routing-hint">
+              MCP 工具 = 提示式工具调用 + 真正的 MCP 协议客户端：agentd 会按你填写的命令启动一个外部 MCP Server（stdio transport），自动 <code>tools/list</code> 发现它暴露的工具，模型需要时用 <code>[TOOL_CALL]</code> 调用、结果经 <code>tools/call</code> 取回。内置 calculator/current_time 作为兜底。下方 server 命令默认指向仓库自带的演示 server（Python，无需联网）。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">MCP Server 命令</div>
+                <div className="setting-desc">
+                  启动外部 MCP server 的子进程命令，如 <code>python3 /path/demo_server.py</code> 或 <code>npx -y @modelcontextprotocol/server-everything</code>。
+                </div>
+              </div>
+              <input
+                type="text"
+                className="setting-num"
+                style={{ width: "100%", maxWidth: 520 }}
+                value={serverCommand}
+                onChange={(e) => setServerCommand(e.target.value)}
+                placeholder="python3 /root/workspace/agentOS/agentd/mcp_servers/demo_server.py"
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">最大工具轮数</div>
+                <div className="setting-desc">
+                  最多调用工具几轮（默认 3，防无限循环）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={1}
+                max={10}
+                value={maxRounds}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setMaxRounds(Number.isFinite(v) ? Math.min(10, Math.max(1, v)) : 1);
+                }}
+              />
+            </label>
+          </div>
+        )}
+
+        {mode === "recovery" && (
+          <div className="steps">
+            <div className="routing-hint">
+              异常恢复 = 给任意子模式套一层「自愈外壳」：运行时监控失败信号——子模式抛出错误会整段重试；工具返回异常会自动提示模型修正（recover）；重试耗尽则降级（fallback）到单次对话兜底，而不是直接把错误甩给你。下方可选择被包裹的子模式与最大重试次数。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">包裹的子模式</div>
+                <div className="setting-desc">
+                  选一个内部 pattern 让 recovery 来守护（tool_use / mcp / goal_setting / planning 等）。
+                </div>
+              </div>
+              <select
+                className="setting-num"
+                value={innerPattern}
+                onChange={(e) => setInnerPattern(e.target.value)}
+              >
+                <option value="tool_use">工具调用 (tool_use)</option>
+                <option value="mcp">MCP 工具 (mcp)</option>
+                <option value="goal_setting">目标设定 (goal_setting)</option>
+                <option value="planning">规划 (planning)</option>
+                <option value="memory">记忆 (memory)</option>
+                <option value="learning">学习适应 (learning)</option>
+                <option value="prompt_chaining">提示链 (prompt_chaining)</option>
+              </select>
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">最大重试次数</div>
+                <div className="setting-desc">
+                  子模式硬错误时整段重试几次（默认 3，不含首次）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={0}
+                max={10}
+                value={maxRetries}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setMaxRetries(Number.isFinite(v) ? Math.min(10, Math.max(0, v)) : 0);
+                }}
+              />
+            </label>
+          </div>
+        )}
+
+        {mode === "hitl" && (
+          <div className="steps">
+            <div className="routing-hint">
+              人在回路（HITL）= 给「工具调用」套一层人工审批闸口：Agent 在<strong>真正执行工具之前</strong>先暂停，把"打算调用什么工具、参数是什么"呈现给你，等你<strong>批准 / 驳回 / 改写</strong>后再继续。这是生产化部署里防止危险或不可逆操作的核心机制（与 Ch12 自愈相对，这是"受控"）。下方可选择被包裹的工具模式与是否对所有工具确认。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">内部工具模式</div>
+                <div className="setting-desc">
+                  选 tool_use（内置计算器/时间）或 mcp（外部 MCP 工具）。
+                </div>
+              </div>
+              <select
+                className="setting-num"
+                value={innerPattern}
+                onChange={(e) => setInnerPattern(e.target.value)}
+              >
+                <option value="tool_use">内置工具 (tool_use)</option>
+                <option value="mcp">MCP 工具 (mcp)</option>
+              </select>
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">对所有工具都确认</div>
+                <div className="setting-desc">
+                  开启则每个工具调用都暂停等你审批；关闭则只对有副作用的"敏感"工具确认（演示里 calculator/current_time 视为无害，自动放行）。
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                className="setting-num"
+                checked={confirmAll}
+                onChange={(e) => setConfirmAll(e.target.checked)}
+              />
+            </label>
+            {innerPattern === "mcp" && (
+              <label className="setting-row plan-steps-row">
+                <div className="setting-info">
+                  <div className="setting-title">MCP Server 命令</div>
+                  <div className="setting-desc">
+                    仅内部模式选 mcp 时生效。必须是<strong>完整启动命令</strong>，例如 <code>python3 /abs/path/server.py</code>——只填脚本路径会报 Permission denied。
+                  </div>
+                </div>
+                <input
+                  type="text"
+                  className="setting-num"
+                  style={{ width: "100%", maxWidth: 520 }}
+                  value={serverCommand}
+                  onChange={(e) => setServerCommand(e.target.value)}
+                  placeholder="python3 /root/workspace/agentOS/agentd/mcp_servers/demo_server.py"
+                />
+              </label>
+            )}
+          </div>
+        )}
       </section>
 
       <section className="input-row">
@@ -554,6 +1033,11 @@ export default function Page() {
             {b.kind === "tool_call" && <div className="tool-call-label">🔧 {b.text}</div>}
             {b.kind === "tool_result" && <div className="tool-result-label">↩️ {b.text}</div>}
             {b.kind === "plan" && <div className="plan-label">📋 {b.text}</div>}
+            {b.kind === "agent" && <div className="agent-label">🤖 {b.text}</div>}
+            {b.kind === "memory" && <div className="memory-label">🧠 {b.text}</div>}
+            {b.kind === "profile" && <div className="profile-label">🎯 {b.text}</div>}
+            {b.kind === "recovery" && <div className="recovery-label">🛡️ {b.text}</div>}
+            {b.kind === "hitl" && <div className="hitl-label">🧑‍⚖️ {b.text}</div>}
             {b.kind === "thought" && (
               <details className="thought" open={settings.thoughtOpen}>
                 <summary>💭 思考过程</summary>
@@ -567,6 +1051,36 @@ export default function Page() {
             {b.kind === "error" && <div className="err">{b.text}</div>}
           </div>
         ))}
+
+        {confirmBlock && (
+          <div className="hitl-confirm">
+            <div className="hitl-confirm-head">🧑‍⚖️ 请审批上述工具调用</div>
+            <div className="hitl-confirm-actions">
+              <button className="hitl-btn approve" onClick={() => sendHitlDecision("approve")}>
+                ✅ 批准
+              </button>
+              <button className="hitl-btn reject" onClick={() => sendHitlDecision("reject")}>
+                ⛔ 驳回
+              </button>
+            </div>
+            <div className="hitl-confirm-edit">
+              <div className="hitl-confirm-edit-title">或改写参数后执行：</div>
+              <input
+                type="text"
+                className="hitl-edit-input"
+                value={editArgs}
+                onChange={(e) => setEditArgs(e.target.value)}
+                placeholder='新参数 JSON，如 {"a":2,"b":3}'
+              />
+              <button
+                className="hitl-btn edit"
+                onClick={() => sendHitlDecision("edit", editArgs)}
+              >
+                ✏️ 改写执行
+              </button>
+            </div>
+          </div>
+        )}
       </section>
     </div>
   );

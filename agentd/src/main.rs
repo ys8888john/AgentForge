@@ -2,6 +2,8 @@ mod config;
 mod state;
 mod llm;
 mod events;
+mod memory;
+mod mcp;
 mod patterns;
 
 use std::convert::Infallible;
@@ -25,7 +27,14 @@ use patterns::parallelization::Worker;
 use patterns::reflection::{ReflectionConfig, Critic};
 use patterns::tool_use::{ToolUseConfig, Tool};
 use patterns::planning::PlanningConfig;
-use state::AppState;
+use patterns::goal_setting::GoalSettingConfig;
+use patterns::multi_agent::{Agent as MAAgent, MultiAgentConfig};
+use patterns::memory::MemoryConfig;
+use patterns::learning::LearningConfig;
+use patterns::mcp_tool::McpToolConfig;
+use patterns::recovery::RecoveryConfig;
+use patterns::hitl::HitlConfig;
+use state::{AppState, HitlDecision};
 
 #[tokio::main]
 async fn main() {
@@ -39,6 +48,7 @@ async fn main() {
     let app = Router::new()
         .route("/api/sessions", post(create_session))
         .route("/api/sessions/:id/run", post(run_task))
+        .route("/api/sessions/:id/decision", post(hitl_decision))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -183,6 +193,50 @@ fn parse_planning(payload: &Value) -> PlanningConfig {
     PlanningConfig { max_steps }
 }
 
+/// 从请求体解析多智能体模式配置（Ch7 多智能体用）：agents / synthesis_prompt
+fn parse_multi_agent(payload: &Value) -> MultiAgentConfig {
+    let agents = payload
+        .get("agents")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| {
+                    let name = s
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let persona = s
+                        .get("persona")
+                        .and_then(|p| p.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if name.is_empty() {
+                        None
+                    } else {
+                        // persona 缺省时给个通用兜底，避免空设定
+                        let persona = if persona.is_empty() {
+                            format!("你扮演「{}」，从你的专业角度独立给出观点。", name)
+                        } else {
+                            persona
+                        };
+                        Some(MAAgent { name, persona })
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let synthesis_prompt = payload
+        .get("synthesis_prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    MultiAgentConfig {
+        agents,
+        synthesis_prompt,
+    }
+}
+
 /// 从请求体解析工具调用配置（Ch5 工具调用用）：tools / max_rounds
 fn parse_tool_use(payload: &Value) -> ToolUseConfig {
     let tools = payload
@@ -227,6 +281,9 @@ fn parse_tool_use(payload: &Value) -> ToolUseConfig {
 /// - `"reflection"`           → 第四章反思，生成→并行批评→修订，迭代多轮
 /// - `"tool_use"`             → 第五章工具调用，模型生成→调工具→回灌→续答
 /// - `"planning"`             → 第六章规划，模型先定计划→逐步执行→汇总
+/// - `"multi_agent"`          → 第七章多智能体，多角色并行分工→汇总 Agent 综合
+/// - `"memory"`               → 第八章记忆，召回会话历史记忆→带记忆对话→写回记忆
+/// - `"learning"`             → 第九章学习适应，在记忆基础上提炼用户偏好画像并主动套用
 ///
 /// 内部统一产出 `AgentEvent` 流，再映射成 SSE 事件推给前端。
 async fn run_task(
@@ -275,6 +332,135 @@ async fn run_task(
     } else if pattern == "planning" {
         let pc = parse_planning(&payload);
         Box::pin(patterns::planning::run(pc, input, cfg))
+    } else if pattern == "multi_agent" {
+        let mc = parse_multi_agent(&payload);
+        Box::pin(patterns::multi_agent::run(mc, input, cfg))
+    } else if pattern == "memory" {
+        let recall_k = payload
+            .get("recall_k")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+        let mc = MemoryConfig { recall_k };
+        // 记忆按会话隔离：用路径里的 session id 作为记忆归属
+        Box::pin(patterns::memory::run(
+            mc,
+            _id.clone(),
+            input,
+            cfg,
+            state.memory.clone(),
+        ))
+    } else if pattern == "learning" {
+        let recall_k = payload
+            .get("recall_k")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+        let lc = LearningConfig { recall_k };
+        // 学习适应按会话隔离：记忆与偏好画像都归属该 session id
+        Box::pin(patterns::learning::run(
+            lc,
+            _id.clone(),
+            input,
+            cfg,
+            state.memory.clone(),
+            state.profile.clone(),
+        ))
+    } else if pattern == "goal_setting" {
+        let max_steps = payload
+            .get("max_steps")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+        let max_rounds = payload
+            .get("max_rounds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3) as usize;
+        let gc = GoalSettingConfig { max_steps, max_rounds };
+        // 目标设定只吃一个目标文本，复用 input 字段；按会话隔离记忆可选（此处未接记忆）
+        Box::pin(patterns::goal_setting::run(gc, input, cfg))
+    } else if pattern == "mcp" {
+        let server_command = payload
+            .get("server_command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        if server_command.trim().is_empty() {
+            Box::pin(futures::stream::once(async move {
+                Ok(AgentEvent::Error(
+                    "MCP 模式需要 `server_command` 字段（如 \"python3 /abs/demo_server.py\"）".to_string(),
+                ))
+            }))
+        } else {
+            let timeout_secs = payload
+                .get("timeout_secs")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(30) as u64;
+            let mc = McpToolConfig {
+                server_command,
+                timeout_secs,
+                max_rounds: payload
+                    .get("max_rounds")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(3) as usize,
+            };
+            Box::pin(patterns::mcp_tool::run(mc, input, cfg))
+        }
+    } else if pattern == "hitl" {
+        // 人在回路：包裹一个"带确认的工具循环"，执行工具前暂停等用户决策
+        let inner_pattern = payload
+            .get("inner_pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("tool_use")
+            .to_string();
+        let confirm_all = payload
+            .get("confirm_all")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let max_rounds = payload
+            .get("max_rounds")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5) as usize;
+        let server_command = payload
+            .get("server_command")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let timeout_secs = payload
+            .get("timeout_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(30) as u64;
+        let hc = HitlConfig {
+            inner_pattern,
+            confirm_all,
+            max_rounds,
+            server_command,
+            timeout_secs,
+        };
+        Box::pin(patterns::hitl::run(
+            hc,
+            _id.clone(),
+            input,
+            cfg,
+            state.clone(),
+        ))
+    } else if pattern == "recovery" {
+        // 异常恢复：包裹一个子模式，自动重试/恢复/降级
+        let inner_pattern = payload
+            .get("inner_pattern")
+            .and_then(|v| v.as_str())
+            .unwrap_or("tool_use")
+            .to_string();
+        let max_retries = payload
+            .get("max_retries")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(3) as usize;
+        let rc = RecoveryConfig { inner_pattern, max_retries };
+        // 把整个 payload 交给 recovery，由它按需重建子模式流（含重试）
+        Box::pin(patterns::recovery::run(
+            rc,
+            payload.clone(),
+            _id.clone(),
+            cfg,
+            state.clone(),
+        ))
     } else {
         match llm::stream_chat(&cfg, &input).await {
             Ok(s) => Box::pin(s.map(|r| {
@@ -305,6 +491,21 @@ async fn run_task(
                 AgentEvent::Worker { index, name } => {
                     Ok(Event::default().event("worker").data(format!("{}:{}", index, name)))
                 }
+                AgentEvent::Agent { index, name } => {
+                    Ok(Event::default().event("agent").data(format!("{}:{}", index, name)))
+                }
+                AgentEvent::Memory { phase, text } => {
+                    Ok(Event::default().event("memory").data(format!("{}:{}", phase, text)))
+                }
+                AgentEvent::Profile { text } => {
+                    Ok(Event::default().event("profile").data(text))
+                }
+                AgentEvent::Recovery { phase, text } => {
+                    Ok(Event::default().event("recovery").data(format!("{}:{}", phase, text)))
+                }
+                AgentEvent::Hitl { phase, text } => {
+                    Ok(Event::default().event("hitl").data(format!("{}:{}", phase, text)))
+                }
                 AgentEvent::Token(t) => Ok(Event::default().event("token").data(t)),
                 AgentEvent::Thought(t) => Ok(Event::default().event("thought").data(t)),
                 AgentEvent::Done(t) => Ok(Event::default().event("done").data(t)),
@@ -331,4 +532,31 @@ async fn run_task(
     let boxed: Pin<Box<dyn futures::Stream<Item = Result<Event, Infallible>> + Send + 'static>> =
         Box::pin(sse_stream);
     Sse::new(boxed).keep_alive(KeepAlive::default())
+}
+
+/// HITL 决策端点：前端在用户点"批准/驳回/改写"时调用，唤醒对应会话挂起的工具确认。
+///
+/// body 形如 `{"action":"approve"}` / `{"action":"reject"}` /
+/// `{"action":"edit","content":"{\"x\":1}"}`。
+async fn hitl_decision(
+    Path(session): Path<String>,
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> impl IntoResponse {
+    let action = payload
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or("reject")
+        .to_string();
+    let content = payload
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let decision: HitlDecision = (action, content);
+    if state.hitl.resolve(&session, decision).await {
+        Json(json!({ "ok": true }))
+    } else {
+        Json(json!({ "ok": false, "error": "该会话当前没有待确认的请求" }))
+    }
 }

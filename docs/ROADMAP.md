@@ -39,11 +39,16 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M2-Ch4 反思 | ✅ 完成 | `patterns/reflection.rs`，生成→并行批评→修订迭代，**新增 `Reflect`/`Revision` 事件** |
 | M2-Ch5 工具调用 | ✅ 完成 | `patterns/tool_use.rs`，提示式工具调用循环，**新增 `ToolCall`/`ToolResult` 事件**，内置 calculator/current_time |
 | M2-Ch6 规划 | ✅ 完成 | `patterns/planning.rs`，三阶段（制定计划→按步执行→汇总），**新增 `Plan` 事件** |
-| M2-Ch7 多智能体 | ⬜ 待做 | 多 Agent 协作（辩论/分工） |
-| M3 记忆与工具 | ⬜ 待做 | `tools/` `memory/` MCP（工具的「注册表」机制已在 Ch5 打好基础） |
-| M4 生产化 | ⬜ 待做 | 异常恢复 / 人在回路 / RAG |
+| M2-Ch7 多智能体 | ✅ 完成 | `patterns/multi_agent.rs`，多角色并行分工→汇总 Agent 综合，**新增 `Agent` 事件** |
+| M3-Ch8 记忆 | ✅ 完成 | `memory/mod.rs`（按会话长期记忆）+ `patterns/memory.rs`（记忆模式），**新增 `Memory` 事件**；持久化/向量检索待 M3 深化 |
+| M3-Ch9 学习适应 | ✅ 完成 | `memory/mod.rs`（ProfileStore 偏好画像）+ `patterns/learning.rs`（四步：召回→带画像对话→LLM 提炼偏好→写记忆），**新增 `Profile` 事件** |
+| M3-Ch11 目标设定 | ✅ 完成 | `patterns/goal_setting.rs`（目标驱动闭环：规划→执行→自检达成→未达成带进展重规划，复用 Plan/Step/Reflect/Done 事件） |
+| M3-Ch10 MCP 工具 | ✅ 完成 | `mcp/mod.rs`（MCP stdio 客户端：initialize/tools/list/tools/call）+ `patterns/mcp_tool.rs`（动态发现外部工具 + 提示式调用，复用 ToolCall/ToolResult 事件）+ `mcp_servers/demo_server.py` 演示 server |
+| M4-Ch12 异常恢复 | ✅ 完成 | `patterns/recovery.rs`（自愈外壳：包裹子模式，监控 Error→整段重试、工具异常→recover、重试耗尽→fallback 单次对话，新增 `Recovery` 事件） |
+| M4-Ch13 人在回路 | ✅ 完成 | `patterns/hitl.rs`（"工具调用前确认"闸口：执行工具前暂停，发 `Hitl{confirm}`，经 `HitlStore`（oneshot）跨请求挂起等用户 approve/reject/edit，新增 `Hitl` 事件；`state.rs` 加 `HitlStore` + `POST /api/sessions/:id/decision` 端点） |
+| M4 生产化 | 🟡 部分 | RAG 待做 |
 | M5 多智能体 | ⬜ 待做 | A2A / 护栏 / 评估 |
-| 前端面板 | 🟡 部分 | 工作台七种模式可用；**设置页已完成**（think/思考展开/最大轮数），侧栏 **会话/智能体 仍是占位空壳** |
+| 前端面板 | 🟡 部分 | 工作台十三种模式（含记忆/学习适应/目标设定/MCP 工具/异常恢复/人在回路）可用；**设置页已完成**（think/思考展开/最大轮数），人在回路新增审批面板（批准/驳回/改写）；侧栏 **会话/智能体 仍是占位空壳** |
 
 ---
 
@@ -58,12 +63,18 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M2 基础模式 | **Ch4** | 反思 Reflection | `patterns/reflection.rs` | ✅ |
 | M2 基础模式 | **Ch5** | 工具调用 Tool Use | `patterns/tool_use.rs` | ✅ |
 | M2 基础模式 | **Ch6** | 规划 Planning | `patterns/planning.rs` | ✅ |
-| M2 基础模式 | Ch7 | 多智能体 Multi-Agent | `patterns/multi_agent.rs` | ⬜ |
-| M3 记忆与工具 | Ch5/Ch8/Ch10 | 工具注册 + 记忆 + MCP | `tools/` `memory/` | ⬜ |
-| M4 生产化 | Ch12-14 | 异常恢复 / 人在回路 / RAG | — | ⬜ |
+| M2 基础模式 | Ch7 | 多智能体 Multi-Agent | `patterns/multi_agent.rs` | ✅ |
+| M3 记忆与工具 | Ch8 | 记忆 Memory | `memory/mod.rs` + `patterns/memory.rs` | ✅ |
+| M3 记忆与工具 | Ch9 | 学习适应 Learning | `memory/mod.rs`（ProfileStore）+ `patterns/learning.rs` | ✅ |
+| M3 记忆与工具 | Ch10 | MCP 工具 / 工具注册 | `mcp/mod.rs` + `patterns/mcp_tool.rs` + `mcp_servers/demo_server.py` | ✅ |
+| M3 记忆与工具 | Ch11 | 目标设定 Goal Setting | `patterns/goal_setting.rs` | ✅ |
+| M4 生产化 | Ch12 | 异常恢复 Error Recovery | `patterns/recovery.rs` | ✅ |
+| M4 生产化 | Ch13 | 人在回路 Human-in-the-Loop | `patterns/hitl.rs` + `state.rs`(HitlStore) + `main.rs`(decision 端点) | ✅ |
+| M3 记忆与工具 | Ch5/Ch10 | 工具注册 + MCP | `tools/` | ⬜ |
+| M4 生产化 | Ch14 | RAG（待做） | — | ⬜ |
 | M5 多智能体 | Ch15-21 | A2A / 护栏 / 评估 | — | ⬜ |
 
-> 建议按书序推进 M2 的 Ch7（下一步），每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
+> 建议按书序推进：Ch1~Ch13 已落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路），下一步 Ch14 RAG、Ch15+ 多智能体增强，每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
 
 ---
 
@@ -75,17 +86,28 @@ agentOS/
 │   ├── main.rs              # 入口 + axum 路由 + run_task 按 pattern 分发 + SSE 映射
 │   ├── config.rs            # 配置（.env：LISTEN_ADDR / OLLAMA_BASE_URL / OLLAMA_MODEL）
 │   ├── llm.rs               # 流式调用 Ollama；产出 Chunk::Content / Chunk::Reasoning
-│   ├── events.rs            # AgentEvent 枚举（Step/Route/Worker/Reflect/Revision/ToolCall/ToolResult/Plan/Token/Thought/Done/Error）
+│   ├── events.rs            # AgentEvent 枚举（Step/Route/Worker/Reflect/Revision/ToolCall/ToolResult/Plan/Agent/Memory/Profile/Recovery/Hitl/Token/Thought/Done/Error）
+│   ├── state.rs             # AppState + MemoryStore/ProfileStore/HitlStore（HitlStore：oneshot 跨请求挂起/唤醒，Ch13）
+│   ├── memory/mod.rs         # Ch8 ✅ 记忆存储（按会话 MemoryStore，进程内、带容量上限）；Ch9 ✅ 偏好画像 ProfileStore（同结构）
 │   └── patterns/
-│       ├── mod.rs           # 声明 prompt_chaining / routing / parallelization / reflection / tool_use / planning
+│       ├── mod.rs           # 声明 prompt_chaining / routing / parallelization / reflection / tool_use / planning / multi_agent / memory / learning / goal_setting / mcp_tool / recovery / hitl
 │       ├── prompt_chaining.rs   # Ch1 ✅
 │       ├── routing.rs           # Ch2 ✅（含描述增强）
 │       ├── parallelization.rs   # Ch3 ✅
 │       ├── reflection.rs        # Ch4 ✅
 │       ├── tool_use.rs          # Ch5 ✅（提示式工具调用 + 内置 calculator/current_time）
-│       └── planning.rs          # Ch6 ✅（三阶段规划 + Plan 事件）
+│       ├── planning.rs          # Ch6 ✅（三阶段规划 + Plan 事件）
+│       ├── multi_agent.rs        # Ch7 ✅（多角色并行分工 + 汇总 + Agent 事件）
+│       └── memory.rs             # Ch8 ✅（记忆模式：召回→带记忆对话→写回 + Memory 事件）
+│       └── learning.rs           # Ch9 ✅（学习适应：召回→带画像对话→LLM 提炼偏好→写记忆 + Memory/Profile/Done 事件）
+│       └── goal_setting.rs        # Ch11 ✅（目标设定：规划→执行→自检达成→带进展重规划 + Plan/Step/Reflect/Done 事件）
+│       └── recovery.rs           # Ch12 ✅（自愈外壳：重试/恢复/降级 + Recovery 事件）
+│       └── hitl.rs               # Ch13 ✅（人在回路：工具执行前暂停，经 HitlStore 等用户决策 + Hitl 事件）
+│   ├── mcp/mod.rs                  # Ch10 ✅（MCP stdio 客户端：JSON-RPC over 子进程，initialize/list/call）
+│   └── patterns/mcp_tool.rs        # Ch10 ✅（MCP 工具模式：动态发现外部工具 + 提示式调用）
+│   └── mcp_servers/demo_server.py  # Ch10 演示用 MCP server（Python，暴露 calculator/current_time/get_weather）
 ├── web/
-│   ├── app/page.tsx         # 工作台（七种模式 + 步骤/路由/worker/批评者/工具编辑器/规划 + 流式输出）
+│   ├── app/page.tsx         # 工作台（十三种模式：单次/提示链/路由/并行化/反思/工具调用/规划/多智能体/记忆/学习适应/目标设定/MCP/异常恢复/人在回路；含 HITL 审批面板 + 流式输出）
 │   ├── app/globals.css      # 宝塔风格样式
 │   ├── app/layout.tsx       # 侧栏 + 主区 + SettingsProvider
 │   ├── app/Sidebar.tsx      # 侧栏导航（工作台/会话/智能体/设置）
@@ -105,7 +127,7 @@ agentOS/
 ```
 
 ### 事件流约定（前后端契约）
-- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`token`/`thought`/`done`/`error`
+- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`agent`/`memory`/`profile`/`recovery`/`hitl`/`token`/`thought`/`done`/`error`
 - 前端 `lib/sse.ts` 解析后按 `ev.event` 渲染
 - **新增 Pattern 时**：加 `AgentEvent` 变体 → `main.rs` 映射 SSE → 前端 `page.tsx` 渲染，三步缺一不可
 
@@ -137,6 +159,13 @@ agentOS/
    甚至只输出 `[TO`/`[TOOL`/`[/TO`。`tool_use.rs` 的流式守卫按最短前缀 `[TO`/`[/TO` 拦截，
    并在分块边界扣留尾部的 `[`/`[/` 暂不下发；`sanitize_output` 会剥掉任意长度的标记及其 JSON 参数。
    **历史回灌务必用后端重建的规范 `[TOOL_CALL]{...}` 行**，不要回灌原始 `full`，否则模型会反复调工具直到 `max_rounds`。
+10. **改完后端必须重启 daemon 才能生效**：后端是编译型二进制，改 `*.rs` 后只 `cargo build` 不够，
+    跑在 8090 上的仍是旧进程（本次 Ch8 记忆就因没重启，前端 `pattern:"memory"` 被旧 daemon 当单次对话处理，
+    表现为"记忆完全不生效"）。诊断：`ps -eo lstart,cmd` 看进程启动时间是否晚于 `stat -c %y target/debug/agentd` 编译时间。
+    正确做法见坑 6（`pkill -x agentd` + `setsid` 重启）。
+11. **前端别用 Rust 的 `splitn`**：新增 SSE 事件解析时，JS 字符串**没有 `splitn` 方法**（那是 Rust 的）。
+    Ch8 的 `memory` 事件曾写成 `ev.data.splitn(2, ":")` 导致浏览器报 `ev.data.splitn is not a function`、整页渲染崩。
+    前端切分固定前缀用 `indexOf` + `slice`：`const ci = ev.data.indexOf(":"); phase = slice(0,ci); text = slice(ci+1)`。
 
 ---
 
@@ -144,10 +173,10 @@ agentOS/
 
 | 优先级 | 动作 | 说明 |
 |--------|------|------|
-| 高 | **实现 Ch7 多智能体（Multi-Agent）** | 按书序，多个 Agent 协作（辩论/分工）。新建 `multi_agent.rs` + 前端「多智能体」模式 |
+| 高 | **Ch15+ 生产化多智能体增强** | 当前 Ch7 为「单 LLM 多角色」轻量形态；后续可扩展为每 Agent 独立进程/模型、Agent 间消息传递、辩论协商 |
 | 中 | **补侧栏 会话/智能体 页面** | 设置页已完成；会话/智能体仍是空壳，让面板更完整 |
 | 中 | **路由健壮性增强** | 分类器输出 JSON（含 reason）、兜底/拒识路由 |
-| 低 | **每章沉淀 docs/chN-*.md** | 保持「学一章写一章」节奏（Ch1~Ch6 已完成） |
+| 低 | **每章沉淀 docs/chN-*.md** | 保持「学一章写一章」节奏（Ch1~Ch7 已完成） |
 
 ---
 
@@ -196,7 +225,22 @@ curl -s -N -X POST http://localhost:8090/api/sessions/t/run -H 'Content-Type: ap
   -d '{"input":"帮我规划一个杭州周边两天一夜的旅行","pattern":"planning","max_steps":3}' \
   --max-time 150 | grep -E "^event:" | sort | uniq -c
 
-# 9) 前端
+# 9) 多智能体（Ch7）
+curl -s -N -X POST http://localhost:8090/api/sessions/t/run -H 'Content-Type: application/json' \
+  -d '{"input":"应不应该大力发展自动驾驶出租车？","pattern":"multi_agent",
+       "agents":[{"name":"科学家","persona":"你是一位交通工程研究者，分析安全性、效率与环境影响。"},
+                 {"name":"产品经理","persona":"你是一位出行产品经理，从用户体验与商业化分析。"},
+                 {"name":"风险官","persona":"你是一位安全与伦理审查者，专挑责任归属与失业风险。"}]}' \
+  --max-time 200 | grep -E "^event:" | sort | uniq -c
+
+# 10) 记忆（Ch8）：同一会话两轮，第二轮应召回第一轮
+SID=memtest
+curl -s -N -X POST http://localhost:8090/api/sessions/$SID/run -H 'Content-Type: application/json' \
+  -d '{"input":"我叫小明，喜欢用中文、偏好简洁回答。","pattern":"memory"}' --max-time 120 | grep -E "^event:"
+curl -s -N -X POST http://localhost:8090/api/sessions/$SID/run -H 'Content-Type: application/json' \
+  -d '{"input":"帮我写一句产品 slogan","pattern":"memory"}' --max-time 120 | grep -E "^event: memory"
+
+# 11) 前端
 curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 ```
 
@@ -213,7 +257,11 @@ curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 - `docs/ch4-reflection.md` — Ch4 总结
 - `docs/ch5-tool-use.md` — Ch5 总结
 - `docs/ch6-planning.md` — Ch6 总结（规划三阶段 + Plan 事件）
+- `docs/ch7-multi-agent.md` — Ch7 总结（多角色并行分工 + 汇总 + Agent 事件）
+- `docs/ch8-memory.md` — Ch8 总结（会话级长期记忆 + Memory 事件）
+- `docs/ch12-recovery.md` — Ch12 总结（自愈外壳：重试/恢复/降级 + Recovery 事件）
+- `docs/ch13-hitl.md` — Ch13 总结（人在回路：工具执行前确认闸口 + Hitl 事件 + decision 端点）
 
 ---
 
-*最后更新：2026-07-29。状态：M1+M2(Ch1~Ch6) 完成，前端工作台七种模式可用，设置页完成，侧栏 会话/智能体 待补，下一步 Ch7 多智能体。*
+*最后更新：2026-08-20。状态：Ch1~Ch13 全部落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路），前端工作台十三种模式可用（人在回路含审批面板），设置页完成，侧栏 会话/智能体 待补，下一步 Ch14 RAG 或 Ch15+ 多智能体增强。*
