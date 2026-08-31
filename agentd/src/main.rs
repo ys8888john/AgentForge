@@ -4,6 +4,7 @@ mod llm;
 mod events;
 mod memory;
 mod mcp;
+mod a2a;
 mod patterns;
 
 use std::convert::Infallible;
@@ -11,8 +12,9 @@ use std::pin::Pin;
 
 use axum::{
     extract::{Path, State},
+    http::StatusCode,
     response::{sse::{Event, KeepAlive, Sse}, IntoResponse},
-    routing::post,
+    routing::{get, post},
     Json, Router,
 };
 use futures::StreamExt;
@@ -34,6 +36,8 @@ use patterns::learning::LearningConfig;
 use patterns::mcp_tool::McpToolConfig;
 use patterns::recovery::RecoveryConfig;
 use patterns::hitl::HitlConfig;
+use a2a::AgentCard;
+use patterns::a2a::A2aConfig;
 use state::{AppState, HitlDecision};
 
 #[tokio::main]
@@ -49,6 +53,10 @@ async fn main() {
         .route("/api/sessions", post(create_session))
         .route("/api/sessions/:id/run", post(run_task))
         .route("/api/sessions/:id/decision", post(hitl_decision))
+        // Ch15 A2A：服务发现——列出已注册的 Agent 能力卡片 / 注册新卡片
+        .route("/api/a2a/agents", get(list_agents).post(register_agent))
+        // A2A 规范风格的「自身能力卡」：便于别的 agentd 或外部系统发现本 daemon
+        .route("/.well-known/agent.json", get(self_agent_card))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
@@ -237,6 +245,84 @@ fn parse_multi_agent(payload: &Value) -> MultiAgentConfig {
     }
 }
 
+/// 从请求体解析 A2A 协作配置（Ch15 A2A 用）：agents（能力卡片）/ rounds / final_prompt
+fn parse_a2a(payload: &Value) -> A2aConfig {
+    let agents = payload
+        .get("agents")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| {
+                    let name = s
+                        .get("name")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .trim()
+                        .to_string();
+                    if name.is_empty() {
+                        return None;
+                    }
+                    let description = s
+                        .get("description")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    // 没写能力描述时给个通用兜底，避免协调者看到空能力
+                    let description = if description.is_empty() {
+                        format!("你扮演「{}」，从你的专业角度独立给出观点。", name)
+                    } else {
+                        description
+                    };
+                    let skills = s
+                        .get("skills")
+                        .and_then(|x| x.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str().map(|t| t.to_string()))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    // model / endpoint 为空串一律视为 None（"没指定"而非"指定了空"）
+                    let model = s
+                        .get("model")
+                        .and_then(|x| x.as_str())
+                        .map(str::trim)
+                        .filter(|m| !m.is_empty())
+                        .map(|m| m.to_string());
+                    let endpoint = s
+                        .get("endpoint")
+                        .and_then(|x| x.as_str())
+                        .map(str::trim)
+                        .filter(|e| !e.is_empty())
+                        .map(|e| e.to_string());
+                    Some(AgentCard {
+                        name,
+                        description,
+                        skills,
+                        model,
+                        endpoint,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let rounds = payload
+        .get("rounds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(1)
+        .max(1) as usize;
+    let final_prompt = payload
+        .get("final_prompt")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    A2aConfig {
+        agents,
+        rounds,
+        final_prompt,
+    }
+}
+
 /// 从请求体解析工具调用配置（Ch5 工具调用用）：tools / max_rounds
 fn parse_tool_use(payload: &Value) -> ToolUseConfig {
     let tools = payload
@@ -284,6 +370,8 @@ fn parse_tool_use(payload: &Value) -> ToolUseConfig {
 /// - `"multi_agent"`          → 第七章多智能体，多角色并行分工→汇总 Agent 综合
 /// - `"memory"`               → 第八章记忆，召回会话历史记忆→带记忆对话→写回记忆
 /// - `"learning"`             → 第九章学习适应，在记忆基础上提炼用户偏好画像并主动套用
+/// - `"a2a"`                  → 第十五章 Agent 间通信，协调者按能力卡片委派子任务、
+///                              各 Agent 独立执行并回传，可选多轮协商后由协调者汇总
 ///
 /// 内部统一产出 `AgentEvent` 流，再映射成 SSE 事件推给前端。
 async fn run_task(
@@ -335,6 +423,10 @@ async fn run_task(
     } else if pattern == "multi_agent" {
         let mc = parse_multi_agent(&payload);
         Box::pin(patterns::multi_agent::run(mc, input, cfg))
+    } else if pattern == "a2a" {
+        // 第十五章 A2A：请求给了 agents 就用它；没给则由模式内部回落到内建专家卡片
+        let ac = parse_a2a(&payload);
+        Box::pin(patterns::a2a::run(ac, input, cfg))
     } else if pattern == "memory" {
         let recall_k = payload
             .get("recall_k")
@@ -523,6 +615,10 @@ async fn run_task(
                         .event("tool_result")
                         .data(format!("{}\t{}", name, output)))
                 }
+                // Ch15 A2A：text 形如 `from \t to \t content`，前端再按 \t 切三段
+                AgentEvent::A2a { phase, text } => {
+                    Ok(Event::default().event("a2a").data(format!("{}:{}", phase, text)))
+                }
                 AgentEvent::Error(t) => Ok(Event::default().event("error").data(t)),
             },
             Err(e) => Ok(Event::default().event("error").data(e.to_string())),
@@ -559,4 +655,55 @@ async fn hitl_decision(
     } else {
         Json(json!({ "ok": false, "error": "该会话当前没有待确认的请求" }))
     }
+}
+
+/// A2A 服务发现（Ch15）：列出当前已注册的 Agent 能力卡片。
+/// 前端的「拉取能力清单」按钮用它可以一键同步 daemon 上注册好的专家。
+async fn list_agents(State(state): State<AppState>) -> impl IntoResponse {
+    Json(json!({
+        "agents": state.a2a.list(),
+        "count": state.a2a.len(),
+    }))
+}
+
+/// A2A 注册（Ch15）：外部或自定义 Agent 注册自己的能力卡片（同名覆盖）。
+async fn register_agent(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> impl IntoResponse {
+    match serde_json::from_value::<AgentCard>(payload) {
+        Ok(card) => {
+            let name = card.name.clone();
+            state.a2a.upsert(card);
+            (
+                StatusCode::OK,
+                Json(json!({ "ok": true, "name": name })),
+            )
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "ok": false,
+                "error": format!("卡片格式不合法（至少需 name / description 字段）：{}", e),
+            })),
+        ),
+    }
+}
+
+/// 本 daemon 的 A2A 能力卡（Ch15）：对齐 A2A 规范的 `/.well-known/agent.json`，
+/// 让别的 agentd 或外部系统能「发现」agentOS 自己是干什么的。
+async fn self_agent_card(State(state): State<AppState>) -> impl IntoResponse {
+    Json(json!({
+        "name": "agentd",
+        "description": "agentOS 的智能体运行时：以 Agent 为原生执行单元，内置十余种 agent 设计模式。",
+        "skills": [
+            "prompt_chaining", "routing", "parallelization", "reflection", "tool_use",
+            "planning", "multi_agent", "memory", "learning", "goal_setting",
+            "mcp", "recovery", "hitl", "a2a"
+        ],
+        "model": state.config.ollama_model,
+        "endpoint": format!("http://{}/api/sessions/:id/run", state.config.listen_addr),
+        "protocol": "rest+sse",
+        "agents_count": state.a2a.len(),
+    }))
 }

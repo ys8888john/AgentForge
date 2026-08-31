@@ -355,6 +355,18 @@ body {
   margin: 10px 0 4px;
   white-space: pre-wrap;
 }
+/* Ch15 A2A：Agent 之间的消息（谁 → 谁） */
+.a2a-label {
+  color: #1f5f8a;
+  font-weight: 600;
+  font-size: 13px;
+  background: #eaf3fa;
+  border: 1px dashed #5a9ad9;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
 /* HITL 审批面板 */
 .hitl-confirm {
   margin: 12px 0;

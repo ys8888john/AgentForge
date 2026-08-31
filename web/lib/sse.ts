@@ -28,6 +28,17 @@ export interface RunOptions {
   max_iter?: number;
   tools?: { name: string; description?: string }[];
   max_rounds?: number;
+  /** 多智能体（Ch7）角色：name + persona */
+  /** A2A（Ch15）能力卡片：name + description + skills + 可选独立 model */
+  agents?: {
+    name: string;
+    persona?: string;
+    description?: string;
+    skills?: string[];
+    model?: string;
+  }[];
+  /** A2A（Ch15）：协商轮数，1 = 只执行不协商 */
+  rounds?: number;
   /** 规划模式：计划最多包含的步骤数 */
   max_steps?: number;
   /** 是否开启模型思考（reasoning），由设置页控制 */

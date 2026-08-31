@@ -40,6 +40,11 @@ pub enum AgentEvent {
     /// "confirm"（请求确认，将挂起等待）/ "approved"（已批准，继续）/
     /// "rejected"（已驳回）/ "edited"（已改写参数）/ "proceed"（无需确认直接继续）
     Hitl { phase: String, text: String },
+    /// Agent 间通信（Ch15 A2A 用）：一条消息的流动，phase 为
+    /// "discover"（协调者发现可用 Agent）/ "request"（协调者委派子任务）/
+    /// "response"（Agent 回传结果）/ "negotiate"（多轮协商修订）。
+    /// text 为 `from \t to \t content`，前端渲染成"谁 → 谁"的消息气泡。
+    A2a { phase: String, text: String },
     /// 出错
     Error(String),
 }

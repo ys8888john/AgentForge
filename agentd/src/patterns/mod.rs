@@ -4,6 +4,8 @@
 //! - （后续）routing / parallelization / reflection / tool_use / planning / multi_agent
 
 pub mod prompt_chaining;
+#[cfg(test)]
+mod prompt_chaining_tests;
 pub mod routing;
 pub mod parallelization;
 pub mod reflection;
@@ -16,3 +18,4 @@ pub mod goal_setting;
 pub mod mcp_tool;
 pub mod recovery;
 pub mod hitl;
+pub mod a2a;

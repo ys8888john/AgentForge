@@ -19,6 +19,7 @@ type Block = {
     | "profile"
     | "recovery"
     | "hitl"
+    | "a2a"
     | "thought"
     | "token"
     | "done"
@@ -40,7 +41,8 @@ type Mode =
   | "goal_setting"
   | "mcp"
   | "recovery"
-  | "hitl";
+  | "hitl"
+  | "a2a";
 
 export default function Page() {
   const [mode, setMode] = useState<Mode>("single");
@@ -92,6 +94,16 @@ export default function Page() {
   const [innerPattern, setInnerPattern] = useState("tool_use");
   const [maxRetries, setMaxRetries] = useState(3);
   const [confirmAll, setConfirmAll] = useState(true);
+  // A2A（Ch15）：参与协作的专家能力卡片（skills 用逗号分隔的字符串便于编辑）
+  const [a2aAgents, setA2aAgents] = useState<
+    { name: string; description: string; skills: string; model: string }[]
+  >([
+    { name: "研究员", description: "擅长查证事实、数据与机制，给出证据强度与不确定性，不臆造数据。", skills: "事实核查,数据分析", model: "" },
+    { name: "规划师", description: "擅长把目标拆成可执行的步骤，识别依赖、优先级与资源约束。", skills: "任务拆解,优先级排序", model: "" },
+    { name: "审稿人", description: "擅长挑错、补漏、质疑前提，指出未覆盖的场景与潜在副作用。", skills: "批判性审查,漏洞发现", model: "" },
+  ]);
+  // 协商轮数：1 = 只执行不协商
+  const [a2aRounds, setA2aRounds] = useState(1);
   // HITL 待确认块：非空时渲染审批按钮，供用户批准/驳回/改写
   const [confirmBlock, setConfirmBlock] = useState<{ sessionId: string; text: string } | null>(null);
   const [editArgs, setEditArgs] = useState("");
@@ -134,12 +146,35 @@ export default function Page() {
           critics: mode === "reflection" ? critics : undefined,
           max_iter: mode === "reflection" ? 2 : undefined,
           tools: mode === "tool_use" ? tools : undefined,
-          max_rounds: mode === "tool_use" ? settings.maxRounds : undefined,
-          max_steps: mode === "planning" ? maxSteps : undefined,
-          agents: mode === "multi_agent" ? agents : undefined,
+          // 注意：对象字面量里重复 key 会被后者覆盖（曾导致 planning 的 max_steps
+          // 被 goal_setting 那行覆盖成 undefined），同一字段必须合并成一条三元链。
+          max_rounds:
+            mode === "tool_use"
+              ? settings.maxRounds
+              : mode === "goal_setting"
+              ? maxRounds
+              : mode === "hitl"
+              ? 5
+              : undefined,
+          max_steps:
+            mode === "planning" || mode === "goal_setting" ? maxSteps : undefined,
+          // Ch7 传 name+persona；Ch15 A2A 传 name+description+skills+model
+          agents:
+            mode === "multi_agent"
+              ? agents
+              : mode === "a2a"
+              ? a2aAgents.map((a) => ({
+                  name: a.name,
+                  description: a.description,
+                  skills: a.skills
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean),
+                  model: a.model,
+                }))
+              : undefined,
+          rounds: mode === "a2a" ? a2aRounds : undefined,
           recall_k: mode === "memory" || mode === "learning" ? recallK : undefined,
-          max_steps: mode === "goal_setting" ? maxSteps : undefined,
-          max_rounds: mode === "goal_setting" ? maxRounds : undefined,
           server_command:
             mode === "mcp" || (mode === "hitl" && innerPattern === "mcp")
               ? serverCommand
@@ -152,7 +187,6 @@ export default function Page() {
             mode === "recovery" || mode === "hitl" ? innerPattern : undefined,
           max_retries: mode === "recovery" ? maxRetries : undefined,
           confirm_all: mode === "hitl" ? confirmAll : undefined,
-          max_rounds: mode === "hitl" ? 5 : undefined,
           think: settings.think,
         },
         (ev) => {
@@ -254,6 +288,30 @@ export default function Page() {
                 { kind: "hitl", text: `${label}\n${text}` },
               ]);
             }
+          } else if (ev.event === "a2a") {
+            // 数据格式：`phase:from\tto\tcontent`（phase 由后端的消息类型派生）
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const rest = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            const t1 = rest.indexOf("\t");
+            const t2 = t1 >= 0 ? rest.indexOf("\t", t1 + 1) : -1;
+            const from = t1 >= 0 ? rest.slice(0, t1) : "";
+            const to = t2 >= 0 ? rest.slice(t1 + 1, t2) : "";
+            const content = t2 >= 0 ? rest.slice(t2 + 1) : rest;
+            const label =
+              phase === "discover"
+                ? "🔍 服务发现"
+                : phase === "request"
+                ? "📤 委派子任务"
+                : phase === "response"
+                ? "📥 回传结果"
+                : "🔄 协商修订";
+            // from/to 可能为空（退化场景），此时只显示有值的那一侧
+            const flow = from && to ? `${from} → ${to}` : from || to;
+            setOutput((p) => [
+              ...p,
+              { kind: "a2a", text: `${label} · ${flow}\n${content}` },
+            ]);
           } else if (ev.event === "route") {
             const [name, raw] = ev.data.split("\t");
             setOutput((p) => [
@@ -321,6 +379,39 @@ export default function Page() {
 
   function updateAgent(i: number, key: "name" | "persona", val: string) {
     setAgents((c) => c.map((cr, j) => (j === i ? { ...cr, [key]: val } : cr)));
+  }
+
+  function updateA2aAgent(
+    i: number,
+    key: "name" | "description" | "skills" | "model",
+    val: string
+  ) {
+    setA2aAgents((c) => c.map((ag, j) => (j === i ? { ...ag, [key]: val } : ag)));
+  }
+
+  // A2A 服务发现：从 daemon 拉取已注册的 Agent 能力卡片，覆盖当前编辑列表
+  async function fetchA2aAgents() {
+    try {
+      const res = await fetch(`${API_BASE}/api/a2a/agents`);
+      const json = await res.json();
+      const list = (json.agents || []) as {
+        name: string;
+        description: string;
+        skills?: string[];
+        model?: string | null;
+      }[];
+      if (!list.length) return;
+      setA2aAgents(
+        list.map((a) => ({
+          name: a.name,
+          description: a.description || "",
+          skills: (a.skills || []).join(","),
+          model: a.model || "",
+        }))
+      );
+    } catch (e) {
+      console.error("拉取 A2A 能力清单失败：", e);
+    }
   }
 
   // HITL：把决策（approve/reject/edit）回传给 daemon，唤醒挂起的工具确认
@@ -451,6 +542,12 @@ export default function Page() {
             onClick={() => setMode("hitl")}
           >
             人在回路
+          </button>
+          <button
+            className={mode === "a2a" ? "mode active" : "mode"}
+            onClick={() => setMode("a2a")}
+          >
+            A2A 协作
           </button>
         </div>
 
@@ -1004,6 +1101,99 @@ export default function Page() {
             )}
           </div>
         )}
+
+        {mode === "a2a" && (
+          <div className="steps">
+            <div className="routing-hint">
+              A2A（Agent 间通信）= 多个<strong>独立 Agent</strong> 通过显式消息协作：协调者先读取各专家的
+              <strong>能力卡片</strong>（🔍 服务发现），据此<strong>按需委派</strong>子任务（📤，用不上的专家不派），
+              各专家<strong>独立执行</strong>后回传（📥），可开启多轮<strong>协商</strong>（🔄，互看他人立场后修订自己），
+              最后由协调者汇总成最终答复。
+              <br />
+              与「多智能体」的区别：那里是<strong>一个模型演多个角色</strong>、彼此从不通信；这里是<strong>多个 Agent 实体真的在互相发消息</strong>。
+            </div>
+            <div className="routing-hint" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <button
+                className="step-add"
+                style={{ width: "auto", margin: 0 }}
+                onClick={fetchA2aAgents}
+              >
+                ⬇️ 从 daemon 拉取能力清单
+              </button>
+              <span>
+                按 <code>/api/a2a/agents</code> 的服务发现结果覆盖下方列表。「模型」留空 = 用 daemon 默认模型，填了则该 Agent 用自己的模型。
+              </span>
+            </div>
+            {a2aAgents.map((ag, i) => (
+              <div className="step" key={i}>
+                <div className="step-head">
+                  <input
+                    className="step-name"
+                    value={ag.name}
+                    onChange={(e) => updateA2aAgent(i, "name", e.target.value)}
+                    placeholder="Agent 名"
+                  />
+                  <input
+                    className="step-name"
+                    style={{ maxWidth: 180 }}
+                    value={ag.model}
+                    onChange={(e) => updateA2aAgent(i, "model", e.target.value)}
+                    placeholder="模型（可留空）"
+                  />
+                  <button
+                    className="step-del"
+                    onClick={() => setA2aAgents((c) => c.filter((_, j) => j !== i))}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <textarea
+                  className="step-prompt"
+                  value={ag.description}
+                  onChange={(e) => updateA2aAgent(i, "description", e.target.value)}
+                  rows={2}
+                  placeholder="能力描述（协调者据此决定这个子任务派给谁，写得越区分越好）"
+                />
+                <input
+                  className="step-prompt"
+                  value={ag.skills}
+                  onChange={(e) => updateA2aAgent(i, "skills", e.target.value)}
+                  placeholder="技能标签，逗号分隔，如：事实核查,数据分析"
+                />
+              </div>
+            ))}
+            <button
+              className="step-add"
+              onClick={() =>
+                setA2aAgents((c) => [
+                  ...c,
+                  { name: `专家${c.length + 1}`, description: "", skills: "", model: "" },
+                ])
+              }
+            >
+              + 添加 Agent
+            </button>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">协商轮数</div>
+                <div className="setting-desc">
+                  1 = 各 Agent 只执行一次、不协商；每加一轮，各 Agent 会看到<strong>其他</strong> Agent 的立场后修订自己的观点（默认 1，最多 3）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={1}
+                max={3}
+                value={a2aRounds}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setA2aRounds(Number.isFinite(v) ? Math.min(3, Math.max(1, v)) : 1);
+                }}
+              />
+            </label>
+          </div>
+        )}
       </section>
 
       <section className="input-row">
@@ -1038,6 +1228,7 @@ export default function Page() {
             {b.kind === "profile" && <div className="profile-label">🎯 {b.text}</div>}
             {b.kind === "recovery" && <div className="recovery-label">🛡️ {b.text}</div>}
             {b.kind === "hitl" && <div className="hitl-label">🧑‍⚖️ {b.text}</div>}
+            {b.kind === "a2a" && <div className="a2a-label">🔗 {b.text}</div>}
             {b.kind === "thought" && (
               <details className="thought" open={settings.thoughtOpen}>
                 <summary>💭 思考过程</summary>

@@ -46,9 +46,10 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M3-Ch10 MCP 工具 | ✅ 完成 | `mcp/mod.rs`（MCP stdio 客户端：initialize/tools/list/tools/call）+ `patterns/mcp_tool.rs`（动态发现外部工具 + 提示式调用，复用 ToolCall/ToolResult 事件）+ `mcp_servers/demo_server.py` 演示 server |
 | M4-Ch12 异常恢复 | ✅ 完成 | `patterns/recovery.rs`（自愈外壳：包裹子模式，监控 Error→整段重试、工具异常→recover、重试耗尽→fallback 单次对话，新增 `Recovery` 事件） |
 | M4-Ch13 人在回路 | ✅ 完成 | `patterns/hitl.rs`（"工具调用前确认"闸口：执行工具前暂停，发 `Hitl{confirm}`，经 `HitlStore`（oneshot）跨请求挂起等用户 approve/reject/edit，新增 `Hitl` 事件；`state.rs` 加 `HitlStore` + `POST /api/sessions/:id/decision` 端点） |
+| M5-Ch15 A2A 通信 | ✅ 完成 | `a2a/mod.rs`（AgentCard 能力卡 / AgentMessage 消息 / AgentRegistry 服务发现）+ `patterns/a2a.rs`（发现→按能力委派→各 Agent 独立执行回传→多轮协商→协调者汇总），新增 `A2a` 事件；`state.rs` 挂 `AgentRegistry`（预置 4 个内建专家）+ `GET/POST /api/a2a/agents` + `GET /.well-known/agent.json` |
 | M4 生产化 | 🟡 部分 | RAG 待做 |
-| M5 多智能体 | ⬜ 待做 | A2A / 护栏 / 评估 |
-| 前端面板 | 🟡 部分 | 工作台十三种模式（含记忆/学习适应/目标设定/MCP 工具/异常恢复/人在回路）可用；**设置页已完成**（think/思考展开/最大轮数），人在回路新增审批面板（批准/驳回/改写）；侧栏 **会话/智能体 仍是占位空壳** |
+| M5 多智能体 | 🟡 部分 | Ch15 A2A 已落地（能力卡 + 显式消息 + 多轮协商）；护栏(Ch18)/评估(Ch19)/资源优化(Ch16)/推理技术(Ch17) 待做 |
+| 前端面板 | 🟡 部分 | 工作台十四种模式（含记忆/学习适应/目标设定/MCP 工具/异常恢复/人在回路/A2A 协作）可用；**设置页已完成**（think/思考展开/最大轮数），人在回路新增审批面板（批准/驳回/改写），A2A 新增能力卡片编辑器 + 「从 daemon 拉取能力清单」；侧栏 **会话/智能体 仍是占位空壳** |
 
 ---
 
@@ -72,7 +73,8 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M4 生产化 | Ch13 | 人在回路 Human-in-the-Loop | `patterns/hitl.rs` + `state.rs`(HitlStore) + `main.rs`(decision 端点) | ✅ |
 | M3 记忆与工具 | Ch5/Ch10 | 工具注册 + MCP | `tools/` | ⬜ |
 | M4 生产化 | Ch14 | RAG（待做） | — | ⬜ |
-| M5 多智能体 | Ch15-21 | A2A / 护栏 / 评估 | — | ⬜ |
+| M5 多智能体 | **Ch15** | A2A 通信 Inter-Agent Communication | `a2a/mod.rs` + `patterns/a2a.rs` + `main.rs`(agents 端点) | ✅ |
+| M5 多智能体 | Ch16-21 | 资源优化 / 推理技术 / 护栏 / 评估 | — | ⬜ |
 
 > 建议按书序推进：Ch1~Ch13 已落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路），下一步 Ch14 RAG、Ch15+ 多智能体增强，每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
 
@@ -103,6 +105,8 @@ agentOS/
 │       └── goal_setting.rs        # Ch11 ✅（目标设定：规划→执行→自检达成→带进展重规划 + Plan/Step/Reflect/Done 事件）
 │       └── recovery.rs           # Ch12 ✅（自愈外壳：重试/恢复/降级 + Recovery 事件）
 │       └── hitl.rs               # Ch13 ✅（人在回路：工具执行前暂停，经 HitlStore 等用户决策 + Hitl 事件）
+│   ├── a2a/mod.rs                  # Ch15 ✅（AgentCard 能力卡 / AgentMessage 消息 / AgentRegistry 服务发现）
+│   ├── patterns/a2a.rs             # Ch15 ✅（A2A 协作：发现→按能力委派→独立执行回传→多轮协商→汇总）
 │   ├── mcp/mod.rs                  # Ch10 ✅（MCP stdio 客户端：JSON-RPC over 子进程，initialize/list/call）
 │   └── patterns/mcp_tool.rs        # Ch10 ✅（MCP 工具模式：动态发现外部工具 + 提示式调用）
 │   └── mcp_servers/demo_server.py  # Ch10 演示用 MCP server（Python，暴露 calculator/current_time/get_weather）
@@ -127,7 +131,8 @@ agentOS/
 ```
 
 ### 事件流约定（前后端契约）
-- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`agent`/`memory`/`profile`/`recovery`/`hitl`/`token`/`thought`/`done`/`error`
+- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`agent`/`memory`/`profile`/`recovery`/`hitl`/`a2a`/`token`/`thought`/`done`/`error`
+- Ch15 的 `a2a` 事件体为 `<phase>:<from>\t<to>\t<content>`（详见 `docs/ch15-a2a.md`）
 - 前端 `lib/sse.ts` 解析后按 `ev.event` 渲染
 - **新增 Pattern 时**：加 `AgentEvent` 变体 → `main.rs` 映射 SSE → 前端 `page.tsx` 渲染，三步缺一不可
 
@@ -173,7 +178,8 @@ agentOS/
 
 | 优先级 | 动作 | 说明 |
 |--------|------|------|
-| 高 | **Ch15+ 生产化多智能体增强** | 当前 Ch7 为「单 LLM 多角色」轻量形态；后续可扩展为每 Agent 独立进程/模型、Agent 间消息传递、辩论协商 |
+| 高 | **Ch14 RAG（知识检索）** | 书序上唯一的缺口（Ch15 已完成）。注意本地只装了 `qwen3:8b`、**没有 embedding 模型**：建议先用 BM25 关键词检索并抽象出 `Retriever` trait，之后若 pull 到 `nomic-embed-text` 再挂向量实现，pattern 代码不用改 |
+| 中 | **A2A 远程化（Ch15 深化）** | 当前所有 Agent 仍在进程内；可起第二个 agentd 实例，通过 `AgentCard.endpoint` 走 HTTP 真正跨进程调用，届时注册表才名副其实 |
 | 中 | **补侧栏 会话/智能体 页面** | 设置页已完成；会话/智能体仍是空壳，让面板更完整 |
 | 中 | **路由健壮性增强** | 分类器输出 JSON（含 reason）、兜底/拒识路由 |
 | 低 | **每章沉淀 docs/chN-*.md** | 保持「学一章写一章」节奏（Ch1~Ch7 已完成） |
@@ -240,7 +246,16 @@ curl -s -N -X POST http://localhost:8090/api/sessions/$SID/run -H 'Content-Type:
 curl -s -N -X POST http://localhost:8090/api/sessions/$SID/run -H 'Content-Type: application/json' \
   -d '{"input":"帮我写一句产品 slogan","pattern":"memory"}' --max-time 120 | grep -E "^event: memory"
 
-# 11) 前端
+# 11) A2A（Ch15）：服务发现 + 协作（应看到 discover / request / response / done）
+curl -s --max-time 5 http://localhost:8090/api/a2a/agents
+curl -s --max-time 5 http://localhost:8090/.well-known/agent.json
+curl -s -N -X POST http://localhost:8090/api/sessions/a2atest/run -H 'Content-Type: application/json' \
+  -d '{"input":"用一段话说明本地部署的小模型在个人知识管理场景下的优势","pattern":"a2a","rounds":1,
+       "agents":[{"name":"研究员","description":"擅长查证事实、数据与机制","skills":["事实核查"]},
+                 {"name":"撰稿人","description":"擅长把结论组织成通顺可交付的文字","skills":["文案撰写"]}]}' \
+  --max-time 240 | grep -E "^event:" | sort | uniq -c
+
+# 12) 前端
 curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 ```
 
@@ -261,7 +276,8 @@ curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 - `docs/ch8-memory.md` — Ch8 总结（会话级长期记忆 + Memory 事件）
 - `docs/ch12-recovery.md` — Ch12 总结（自愈外壳：重试/恢复/降级 + Recovery 事件）
 - `docs/ch13-hitl.md` — Ch13 总结（人在回路：工具执行前确认闸口 + Hitl 事件 + decision 端点）
+- `docs/ch15-a2a.md` — Ch15 总结（A2A：AgentCard 能力卡 + 显式消息 + 按需委派 + 多轮协商 + A2a 事件）
 
 ---
 
-*最后更新：2026-08-20。状态：Ch1~Ch13 全部落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路），前端工作台十三种模式可用（人在回路含审批面板），设置页完成，侧栏 会话/智能体 待补，下一步 Ch14 RAG 或 Ch15+ 多智能体增强。*
+*最后更新：2026-08-31。状态：Ch1~Ch13 全部落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路），Ch15 A2A 通信已落地（能力卡 + 显式消息 + 按需委派 + 多轮协商 + 服务发现端点），前端工作台十四种模式可用（人在回路含审批面板，A2A 含能力卡编辑与一键拉取清单），设置页完成，侧栏 会话/智能体 待补，下一步 Ch14 RAG（书序上唯一的缺口）。*

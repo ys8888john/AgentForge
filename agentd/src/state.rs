@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use tokio::sync::{oneshot, RwLock, Mutex};
 
+use crate::a2a::AgentRegistry;
 use crate::config::Config;
 use crate::memory::{MemoryStore, ProfileStore};
 
@@ -46,7 +47,7 @@ impl HitlStore {
     }
 }
 
-/// 全局共享状态：配置 + 会话注册表 + 记忆存储 + 偏好画像存储 + 人在回路。
+/// 全局共享状态：配置 + 会话注册表 + 记忆存储 + 偏好画像存储 + 人在回路 + A2A 注册表。
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<Config>,
@@ -57,6 +58,8 @@ pub struct AppState {
     pub profile: ProfileStore,
     /// Ch13 人在回路：按会话隔离的待确认决策
     pub hitl: HitlStore,
+    /// Ch15 A2A：可被发现的 Agent 能力卡片注册表（服务发现层）
+    pub a2a: AgentRegistry,
 }
 
 impl AppState {
@@ -70,6 +73,8 @@ impl AppState {
             profile: ProfileStore::new(30),
             // 人在回路：每会话单槽确认
             hitl: HitlStore::new(),
+            // A2A：预置内建专家，让 A2A 模式开箱即用
+            a2a: AgentRegistry::with_builtin(),
         }
     }
 }
