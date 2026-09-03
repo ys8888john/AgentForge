@@ -39,10 +39,36 @@ export interface RunOptions {
   }[];
   /** A2A（Ch15）：协商轮数，1 = 只执行不协商 */
   rounds?: number;
+  /** 资源感知（Ch16）：生成 token 总预算 */
+  token_budget?: number;
+  /** 资源感知（Ch16）：失败时是否允许降级到更省的档位 */
+  allow_degrade?: boolean;
+  /** 资源感知（Ch16）：强制指定档位 light / standard / deep（跳过自动分级） */
+  force_tier?: string;
+  /** 推理技术（Ch17）：cot / react / tot 三选一 */
+  technique?: string;
+  /** 推理技术（Ch17）：思维树（ToT）并行展开的分支数 */
+  branches?: number;
   /** 规划模式：计划最多包含的步骤数 */
   max_steps?: number;
+  /** 记忆 / 学习（Ch8/Ch9）：召回的历史条数 */
+  recall_k?: number;
+  /** MCP（Ch11）/HITL 内层：启动 MCP server 的命令 */
+  server_command?: string;
+  /** MCP（Ch11）：调用超时秒数 */
+  timeout_secs?: number;
+  /** 异常恢复（Ch12）/HITL 内层：内层模式（如 tool_use / mcp） */
+  inner_pattern?: string;
+  /** 异常恢复（Ch12）：最大重试次数 */
+  max_retries?: number;
+  /** 人在回路（Ch14）：是否一键全部批准 */
+  confirm_all?: boolean;
   /** 是否开启模型思考（reasoning），由设置页控制 */
   think?: boolean;
+  /** RAG（Ch14）：检索召回的片段数 top-k */
+  top_k?: number;
+  /** RAG（Ch14）：严格模式——无资料时只说明无法回答，不臆造 */
+  strict?: boolean;
 }
 
 /**

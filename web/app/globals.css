@@ -355,6 +355,18 @@ body {
   margin: 10px 0 4px;
   white-space: pre-wrap;
 }
+/* Ch16 资源感知优化：档位决策与消耗统计 */
+.resource-label {
+  color: #2f6f4f;
+  font-weight: 600;
+  font-size: 13px;
+  background: #ecf7f0;
+  border: 1px dashed #4fa87a;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
 /* Ch15 A2A：Agent 之间的消息（谁 → 谁） */
 .a2a-label {
   color: #1f5f8a;
@@ -362,6 +374,18 @@ body {
   font-size: 13px;
   background: #eaf3fa;
   border: 1px dashed #5a9ad9;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
+/* Ch14 RAG：检索召回 / 上下文注入 */
+.rag-label {
+  color: #7a4fb0;
+  font-weight: 600;
+  font-size: 13px;
+  background: #f3ecfa;
+  border: 1px dashed #a97fd9;
   border-radius: 8px;
   padding: 8px 10px;
   margin: 10px 0 4px;

@@ -20,6 +20,8 @@ type Block = {
     | "recovery"
     | "hitl"
     | "a2a"
+    | "resource"
+    | "rag"
     | "thought"
     | "token"
     | "done"
@@ -42,7 +44,10 @@ type Mode =
   | "mcp"
   | "recovery"
   | "hitl"
-  | "a2a";
+  | "a2a"
+  | "resource_aware"
+  | "reasoning"
+  | "rag";
 
 export default function Page() {
   const [mode, setMode] = useState<Mode>("single");
@@ -104,6 +109,21 @@ export default function Page() {
   ]);
   // 协商轮数：1 = 只执行不协商
   const [a2aRounds, setA2aRounds] = useState(1);
+  // 资源感知（Ch16）：总预算 / 允许降级 / 强制档位
+  const [tokenBudget, setTokenBudget] = useState(0); // 0 = 不限制
+  const [allowDegrade, setAllowDegrade] = useState(true);
+  const [forceTier, setForceTier] = useState("auto");
+  // 推理技术（Ch17）：CoT / ReAct / ToT + 思维树分支数
+  const [technique, setTechnique] = useState("cot");
+  const [totBranches, setTotBranches] = useState(3);
+  // RAG（Ch14）：本会话知识库（多段资料，纯文本）+ 召回条数 + 严格模式
+  const [kbText, setKbText] = useState(
+    "agentOS 是一个以 Agent 为原生执行单元的操作系统原型，由 Rust daemon(agentd) 与 Next.js 前端(web) 组成。\n\n" +
+    "agentd 用 axum 0.7 提供 REST+SSE 接口，默认端口 8090；通过 Ollama 本地运行 qwen3:8b 模型。\n\n" +
+    "前端是一个宝塔风格面板，实时展示各设计模式的 Agent 输出流。"
+  );
+  const [topK, setTopK] = useState(3);
+  const [strictRag, setStrictRag] = useState(false);
   // HITL 待确认块：非空时渲染审批按钮，供用户批准/驳回/改写
   const [confirmBlock, setConfirmBlock] = useState<{ sessionId: string; text: string } | null>(null);
   const [editArgs, setEditArgs] = useState("");
@@ -131,7 +151,12 @@ export default function Page() {
     setOutput([]);
     try {
       // 每次运行都用全新会话，避免 HITL 单槽决策残留导致"批准后无反应"的脏状态
-      const sid = await createSession();
+      // ——但 RAG 模式例外：知识库是按会话隔离的，必须复用"灌库时"的那个会话，
+      // 否则检索会命中空库。RAG 模式下若已有 sessionId（灌库按钮写入的）就复用它。
+      const sid =
+        mode === "rag" && sessionId
+          ? sessionId
+          : await createSession();
       setSessionId(sid);
       runSid.current = sid;
       await runTask(
@@ -174,6 +199,17 @@ export default function Page() {
                 }))
               : undefined,
           rounds: mode === "a2a" ? a2aRounds : undefined,
+          token_budget:
+            (mode === "resource_aware" || mode === "reasoning") && tokenBudget > 0
+              ? tokenBudget
+              : undefined,
+          allow_degrade: mode === "resource_aware" ? allowDegrade : undefined,
+          force_tier:
+            (mode === "resource_aware" || mode === "reasoning") && forceTier !== "auto"
+              ? forceTier
+              : undefined,
+          technique: mode === "reasoning" ? technique : undefined,
+          branches: mode === "reasoning" ? totBranches : undefined,
           recall_k: mode === "memory" || mode === "learning" ? recallK : undefined,
           server_command:
             mode === "mcp" || (mode === "hitl" && innerPattern === "mcp")
@@ -187,6 +223,8 @@ export default function Page() {
             mode === "recovery" || mode === "hitl" ? innerPattern : undefined,
           max_retries: mode === "recovery" ? maxRetries : undefined,
           confirm_all: mode === "hitl" ? confirmAll : undefined,
+          top_k: mode === "rag" ? topK : undefined,
+          strict: mode === "rag" ? strictRag : undefined,
           think: settings.think,
         },
         (ev) => {
@@ -312,6 +350,33 @@ export default function Page() {
               ...p,
               { kind: "a2a", text: `${label} · ${flow}\n${content}` },
             ]);
+          } else if (ev.event === "resource") {
+            // 数据格式：`phase:text`（与 memory/recovery 事件同构）
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const text = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            const label =
+              phase === "classify"
+                ? "🔎 复杂度判定"
+                : phase === "plan"
+                ? "📊 资源档位"
+                : phase === "degrade"
+                ? "⬇️ 降级"
+                : "🧾 消耗统计";
+            // 关键：降级意味着上一档的输出已作废、会重新生成。
+            // 若不重置累加器，新输出会追加到旧输出后面，变成"半截答案 + 新答案"。
+            if (phase === "degrade") {
+              tokenAcc.current = "";
+            }
+            setOutput((p) => [...p, { kind: "resource", text: `${label} · ${text}` }]);
+          } else if (ev.event === "rag") {
+            // 数据格式：`phase:text`（与 memory/recovery/resource 同构）
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const text = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            const label =
+              phase === "retrieve" ? "🔎 检索召回" : "📥 上下文注入";
+            setOutput((p) => [...p, { kind: "rag", text: `${label} · ${text}` }]);
           } else if (ev.event === "route") {
             const [name, raw] = ev.data.split("\t");
             setOutput((p) => [
@@ -548,6 +613,24 @@ export default function Page() {
             onClick={() => setMode("a2a")}
           >
             A2A 协作
+          </button>
+          <button
+            className={mode === "resource_aware" ? "mode active" : "mode"}
+            onClick={() => setMode("resource_aware")}
+          >
+            资源优化
+          </button>
+          <button
+            className={mode === "reasoning" ? "mode active" : "mode"}
+            onClick={() => setMode("reasoning")}
+          >
+            推理技术
+          </button>
+          <button
+            className={mode === "rag" ? "mode active" : "mode"}
+            onClick={() => setMode("rag")}
+          >
+            RAG
           </button>
         </div>
 
@@ -1194,6 +1277,299 @@ export default function Page() {
             </label>
           </div>
         )}
+
+        {mode === "resource_aware" && (
+          <div className="steps">
+            <div className="routing-hint">
+              资源感知优化 = 让 Agent 学会<strong>「看菜下饭」</strong>：先用一次极便宜的调用判定问题复杂度
+              （🔎 简单/中等/复杂），再据此分配计算预算（📊 档位：关不关思考、生成上限多少），
+              执行失败时自动降级到更省的档位（⬇️），最后报账（🧾 耗时/输出量/预算使用率）。
+              <br />
+              与「异常恢复」的区别：Ch12 是出错后<strong>重试同一套配置</strong>（能不能成功）；
+              这里是<strong>主动按需分配预算</strong>（值不值这个价）。
+            </div>
+            <div className="routing-hint">
+              本机只装了 <code>qwen3:8b</code>，没有第二个模型可切换，所以档位体现在
+              <strong>思考开关</strong>和<strong>生成上限</strong>上——对 qwen3 而言，思考是最大的资源杠杆
+              （一开就是数千 token，本项目历史上正是它把内存吃到 21GB）。深度档才开思考。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">档位策略</div>
+                <div className="setting-desc">
+                  自动：按复杂度选档。也可强制指定某一档，用于对比同一问题在不同预算下的表现。
+                </div>
+              </div>
+              <select
+                className="setting-num"
+                value={forceTier}
+                onChange={(e) => setForceTier(e.target.value)}
+              >
+                <option value="auto">自动（按复杂度分级）</option>
+                <option value="light">轻量档（关思考 · 上限 512）</option>
+                <option value="standard">标准档（关思考 · 上限 1536）</option>
+                <option value="deep">深度档（开思考 · 上限 4096）</option>
+              </select>
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">生成预算（token）</div>
+                <div className="setting-desc">
+                  总预算上限，所有档位的生成上限都不会超过它；0 表示不限制。可用来观察"预算收紧后答案会精简到什么程度"。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={0}
+                max={8192}
+                step={128}
+                value={tokenBudget}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setTokenBudget(Number.isFinite(v) ? Math.min(8192, Math.max(0, v)) : 0);
+                }}
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">允许降级</div>
+                <div className="setting-desc">
+                  某档位调用失败时，自动退到更省的档位重试（深度→标准→轻量），
+                  全部失败后再用默认模型兜底。关闭则失败即失败，可用来观察原始错误。
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                className="setting-num"
+                checked={allowDegrade}
+                onChange={(e) => setAllowDegrade(e.target.checked)}
+              />
+            </label>
+          </div>
+        )}
+
+        {mode === "reasoning" && (
+          <div className="steps">
+            <div className="routing-hint">
+              推理技术 = 让模型<strong>「先想清楚再答」</strong>的几套框架，下拉切换：
+              <br />
+              · <strong>CoT 思维链</strong>：单路径逐步推理，把中间步骤逼出来（数学/逻辑题最直观）。
+              <br />
+              · <strong>ReAct 推理+行动</strong>：思考 → 调工具 → 观察 → 再思考……的循环，能自己决定何时查证。
+              <br />
+              · <strong>ToT 思维树</strong>：并行展开多个候选思路，评估打分后择优深探——模拟多方案权衡。
+              <br />
+              默认走<strong>深度档（开思考）</strong>，因为推理本身就是重活；可用下方预算/档位对比「带推理 vs 不带推理」的差异。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">推理技术</div>
+                <div className="setting-desc">CoT / ReAct / ToT 三选一</div>
+              </div>
+              <select
+                className="setting-num"
+                value={technique}
+                onChange={(e) => setTechnique(e.target.value)}
+              >
+                <option value="cot">思维链 CoT</option>
+                <option value="react">推理+行动 ReAct</option>
+                <option value="tot">思维树 ToT</option>
+              </select>
+            </label>
+            {technique === "tot" && (
+              <label className="setting-row plan-steps-row">
+                <div className="setting-info">
+                  <div className="setting-title">分支数</div>
+                  <div className="setting-desc">
+                    思维树并行展开几个不同思路（2–5），评估阶段择优深探。分支越多越慢。
+                  </div>
+                </div>
+                <input
+                  type="number"
+                  className="setting-num"
+                  min={2}
+                  max={5}
+                  step={1}
+                  value={totBranches}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    setTotBranches(Number.isFinite(v) ? Math.min(5, Math.max(2, v)) : 3);
+                  }}
+                />
+              </label>
+            )}
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">档位策略</div>
+                <div className="setting-desc">
+                  默认深度档（开思考）。也可强制指定某一档，用来对比「开/关思考」对同一问题的推理质量差异。
+                </div>
+              </div>
+              <select
+                className="setting-num"
+                value={forceTier}
+                onChange={(e) => setForceTier(e.target.value)}
+              >
+                <option value="auto">自动（默认深度档）</option>
+                <option value="light">轻量档（关思考 · 上限 512）</option>
+                <option value="standard">标准档（关思考 · 上限 1536）</option>
+                <option value="deep">深度档（开思考 · 上限 4096）</option>
+              </select>
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">生成预算（token）</div>
+                <div className="setting-desc">
+                  总预算上限；0 表示不限制。对比「推理预算收紧后答案会精简到什么程度」。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={0}
+                max={8192}
+                step={128}
+                value={tokenBudget}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setTokenBudget(Number.isFinite(v) ? Math.min(8192, Math.max(0, v)) : 0);
+                }}
+              />
+            </label>
+          </div>
+        )}
+
+        {mode === "rag" && (
+          <div className="steps">
+            <div className="routing-hint">
+              RAG（检索增强生成）= 先检索、再生成：回答前先从<strong>本会话知识库</strong>里用 BM25 召回
+              与问题最相关的片段，拼成上下文喂给模型，让它"基于资料作答"而非凭记忆编造。
+              <br />
+              本机只装了 <code>qwen3:8b</code>、<strong>没有 embedding 模型</strong>，故用 BM25 关键词检索占位；
+              已抽象出 <code>Retriever</code> trait，将来 pull 到向量模型只需换一个实现、模式代码零改动。
+              <br />
+              <strong>使用方式</strong>：先在下方「知识库」粘贴资料 → 点「灌入知识库」→ 再在输入框提问（问题会
+              自动按本会话检索）。同一会话里的资料跨轮次保留。
+            </div>
+            <div className="routing-hint">
+              知识库（本会话，纯文本；每段一行或一段，空行不算一段）：
+            </div>
+            <textarea
+              className="step-prompt"
+              style={{ width: "100%", minHeight: 140 }}
+              value={kbText}
+              onChange={(e) => setKbText(e.target.value)}
+              placeholder="粘贴你的资料，每段一行或一段……"
+            />
+            <div className="routing-hint" style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <button
+                className="step-add"
+                style={{ width: "auto", margin: 0 }}
+                onClick={async () => {
+                  // 分段：优先按空行（\n\n）切成"段落"；若空行分段只得到 1 段
+                  // 但原文明显有多行，则回退按单行切分（每行一条）。
+                  // 这样无论用户用空行还是换行粘贴，资料都不会被合成一条。
+                  let paras = kbText
+                    .split(/\n{2,}/)
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  if (paras.length <= 1 && kbText.split(/\n+/).filter((s) => s.trim()).length > 1) {
+                    paras = kbText
+                      .split(/\n+/)
+                      .map((s) => s.trim())
+                      .filter(Boolean);
+                  }
+                  try {
+                    const sid = await createSession();
+                    await fetch(`${API_BASE}/api/sessions/${sid}/kb`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ docs: paras }),
+                    });
+                    setSessionId(sid);
+                    setOutput((p) => [
+                      ...p,
+                      { kind: "rag", text: `📚 已灌入 ${paras.length} 段资料到会话 ${sid.slice(0, 8)}` },
+                    ]);
+                  } catch (e) {
+                    console.error("灌入知识库失败：", e);
+                  }
+                }}
+              >
+                📚 灌入知识库
+              </button>
+              <button
+                className="step-add"
+                style={{ width: "auto", margin: 0 }}
+                onClick={async () => {
+                  const sid = sessionId || (await createSession());
+                  try {
+                    const res = await fetch(`${API_BASE}/api/sessions/${sid}/kb`);
+                    const json = await res.json();
+                    setKbText((json.docs || []).map((d: any) => d.text).join("\n\n"));
+                    setSessionId(sid);
+                  } catch (e) {
+                    console.error("拉取知识库失败：", e);
+                  }
+                }}
+              >
+                ⬇️ 拉取当前知识库
+              </button>
+              <button
+                className="step-add"
+                style={{ width: "auto", margin: 0 }}
+                onClick={async () => {
+                  const sid = sessionId || (await createSession());
+                  try {
+                    await fetch(`${API_BASE}/api/sessions/${sid}/kb`, { method: "DELETE" });
+                    setSessionId(sid);
+                    setOutput((p) => [...p, { kind: "rag", text: "🗑️ 已清空本会话知识库" }]);
+                  } catch (e) {
+                    console.error("清空知识库失败：", e);
+                  }
+                }}
+              >
+                🗑️ 清空
+              </button>
+              <span>灌入后再提问才会命中；也可先灌入、再在同一会话里提问。</span>
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">召回条数 top-k</div>
+                <div className="setting-desc">
+                  每次检索最多召回多少条相关片段拼进上下文（默认 3）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={1}
+                max={10}
+                value={topK}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setTopK(Number.isFinite(v) ? Math.min(10, Math.max(1, v)) : 1);
+                }}
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">严格模式</div>
+                <div className="setting-desc">
+                  开启则「只依据资料回答」——知识库无相关资料时如实说"资料中未提及"，绝不编造；
+                  关闭则无资料时退化为通用回答并标注"未检索到相关资料"。
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                className="setting-num"
+                checked={strictRag}
+                onChange={(e) => setStrictRag(e.target.checked)}
+              />
+            </label>
+          </div>
+        )}
       </section>
 
       <section className="input-row">
@@ -1229,6 +1605,10 @@ export default function Page() {
             {b.kind === "recovery" && <div className="recovery-label">🛡️ {b.text}</div>}
             {b.kind === "hitl" && <div className="hitl-label">🧑‍⚖️ {b.text}</div>}
             {b.kind === "a2a" && <div className="a2a-label">🔗 {b.text}</div>}
+            {b.kind === "resource" && (
+              <div className="resource-label">⚙️ {b.text}</div>
+            )}
+            {b.kind === "rag" && <div className="rag-label">📚 {b.text}</div>}
             {b.kind === "thought" && (
               <details className="thought" open={settings.thoughtOpen}>
                 <summary>💭 思考过程</summary>

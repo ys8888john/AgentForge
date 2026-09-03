@@ -5,6 +5,8 @@ mod events;
 mod memory;
 mod mcp;
 mod a2a;
+mod resource;
+mod rag;
 mod patterns;
 
 use std::convert::Infallible;
@@ -38,6 +40,10 @@ use patterns::recovery::RecoveryConfig;
 use patterns::hitl::HitlConfig;
 use a2a::AgentCard;
 use patterns::a2a::A2aConfig;
+use patterns::resource_aware::ResourceAwareConfig;
+use patterns::reasoning::ReasoningConfig;
+use patterns::rag::RagConfig;
+use resource::TierOverride;
 use state::{AppState, HitlDecision};
 
 #[tokio::main]
@@ -53,6 +59,11 @@ async fn main() {
         .route("/api/sessions", post(create_session))
         .route("/api/sessions/:id/run", post(run_task))
         .route("/api/sessions/:id/decision", post(hitl_decision))
+        // Ch14 RAG：管理本会话的知识库（列出 / 批量添加 / 清空）
+        .route(
+            "/api/sessions/:id/kb",
+            get(list_kb).post(add_kb).delete(clear_kb),
+        )
         // Ch15 A2A：服务发现——列出已注册的 Agent 能力卡片 / 注册新卡片
         .route("/api/a2a/agents", get(list_agents).post(register_agent))
         // A2A 规范风格的「自身能力卡」：便于别的 agentd 或外部系统发现本 daemon
@@ -323,6 +334,151 @@ fn parse_a2a(payload: &Value) -> A2aConfig {
     }
 }
 
+/// 从请求体解析资源感知配置（Ch16 资源感知优化用）：
+/// token_budget（总预算）/ allow_degrade（允许降级）/ force_tier（强制档位）/
+/// tier_policy（按档位覆盖 model / think / num_predict）
+fn parse_resource_aware(payload: &Value) -> ResourceAwareConfig {
+    let token_budget = payload
+        .get("token_budget")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(8192) as u32);
+    let allow_degrade = payload
+        .get("allow_degrade")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let force_tier = payload
+        .get("force_tier")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    // 按档位解析覆盖项：{"light":{...},"standard":{...},"deep":{...}}
+    let parse_ov = |key: &str| -> TierOverride {
+        let o = payload
+            .get("tier_policy")
+            .and_then(|v| v.get(key))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let model = o
+            .get("model")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let think = o.get("think").and_then(|x| x.as_bool());
+        let num_predict = o
+            .get("num_predict")
+            .and_then(|x| x.as_u64())
+            .map(|n| n.min(8192) as u32);
+        TierOverride {
+            model,
+            think,
+            num_predict,
+        }
+    };
+
+    ResourceAwareConfig {
+        token_budget,
+        allow_degrade,
+        force_tier,
+        policy: resource::TierPolicy {
+            light: parse_ov("light"),
+            standard: parse_ov("standard"),
+            deep: parse_ov("deep"),
+        },
+    }
+}
+
+/// 从请求体解析推理技术配置（Ch17 推理技术用）：
+/// technique（cot/react/tot）/ token_budget / force_tier / branches / max_rounds
+fn parse_reasoning(payload: &Value) -> ReasoningConfig {
+    let technique_str = payload
+        .get("technique")
+        .and_then(|v| v.as_str())
+        .unwrap_or("cot");
+    let technique = patterns::reasoning::Technique::parse(technique_str).unwrap_or(
+        patterns::reasoning::Technique::Cot,
+    );
+    let token_budget = payload
+        .get("token_budget")
+        .and_then(|v| v.as_u64())
+        .map(|n| n.min(8192) as u32);
+    let force_tier = payload
+        .get("force_tier")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
+    let parse_ov = |key: &str| -> TierOverride {
+        let o = payload
+            .get("tier_policy")
+            .and_then(|v| v.get(key))
+            .cloned()
+            .unwrap_or(Value::Null);
+        let model = o
+            .get("model")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let think = o.get("think").and_then(|x| x.as_bool());
+        let num_predict = o
+            .get("num_predict")
+            .and_then(|x| x.as_u64())
+            .map(|n| n.min(8192) as u32);
+        TierOverride {
+            model,
+            think,
+            num_predict,
+        }
+    };
+
+    let branches = payload
+        .get("branches")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3) as usize;
+    let max_rounds = payload
+        .get("max_rounds")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(4) as usize;
+
+    ReasoningConfig {
+        technique,
+        token_budget,
+        force_tier,
+        policy: resource::TierPolicy {
+            light: parse_ov("light"),
+            standard: parse_ov("standard"),
+            deep: parse_ov("deep"),
+        },
+        tools: vec![
+            patterns::reasoning::Tool {
+                name: "calculator".to_string(),
+                description: "计算数学表达式，参数 expr（如 1+2*3）".to_string(),
+            },
+            patterns::reasoning::Tool {
+                name: "current_time".to_string(),
+                description: "返回当前本地时间，无参数".to_string(),
+            },
+        ],
+        max_rounds,
+        branches,
+    }
+}
+
+/// 从请求体解析 RAG 配置（Ch14 检索增强生成用）：
+/// top_k（召回条数）/ strict（严格模式：无资料不编造）
+fn parse_rag(payload: &Value) -> RagConfig {
+    let top_k = payload
+        .get("top_k")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(3)
+        .max(1) as usize;
+    let strict = payload
+        .get("strict")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    RagConfig { top_k, strict }
+}
+
 /// 从请求体解析工具调用配置（Ch5 工具调用用）：tools / max_rounds
 fn parse_tool_use(payload: &Value) -> ToolUseConfig {
     let tools = payload
@@ -372,6 +528,11 @@ fn parse_tool_use(payload: &Value) -> ToolUseConfig {
 /// - `"learning"`             → 第九章学习适应，在记忆基础上提炼用户偏好画像并主动套用
 /// - `"a2a"`                  → 第十五章 Agent 间通信，协调者按能力卡片委派子任务、
 ///                              各 Agent 独立执行并回传，可选多轮协商后由协调者汇总
+/// - `"resource_aware"`       → 第十六章资源感知优化，按复杂度分配计算预算
+///                              （思考开关 / 生成上限），失败时沿档位链优雅降级
+/// - `"reasoning"`             → 第十七章推理技术，下拉切换 CoT（思维链）/
+///                              ReAct（推理+行动）/ ToT（思维树），默认 Deep 档以
+///                              逼出模型的中间推理步骤
 ///
 /// 内部统一产出 `AgentEvent` 流，再映射成 SSE 事件推给前端。
 async fn run_task(
@@ -423,10 +584,28 @@ async fn run_task(
     } else if pattern == "multi_agent" {
         let mc = parse_multi_agent(&payload);
         Box::pin(patterns::multi_agent::run(mc, input, cfg))
+    } else if pattern == "resource_aware" {
+        // 第十六章资源感知优化：按复杂度分配预算，失败时优雅降级
+        let rc = parse_resource_aware(&payload);
+        Box::pin(patterns::resource_aware::run(rc, input, cfg))
+    } else if pattern == "reasoning" {
+        // 第十七章推理技术：CoT / ReAct / ToT 三选一，默认走 Deep 档（开思考）
+        let rc = parse_reasoning(&payload);
+        Box::pin(patterns::reasoning::run(rc, input, cfg))
     } else if pattern == "a2a" {
         // 第十五章 A2A：请求给了 agents 就用它；没给则由模式内部回落到内建专家卡片
         let ac = parse_a2a(&payload);
         Box::pin(patterns::a2a::run(ac, input, cfg))
+    } else if pattern == "rag" {
+        // 第十四章 RAG：检索增强生成。需要本会话知识库（先经 /kb 端点灌入资料）
+        let rc = parse_rag(&payload);
+        Box::pin(patterns::rag::run(
+            rc,
+            _id.clone(),
+            input,
+            cfg,
+            state.kb.clone(),
+        ))
     } else if pattern == "memory" {
         let recall_k = payload
             .get("recall_k")
@@ -615,9 +794,17 @@ async fn run_task(
                         .event("tool_result")
                         .data(format!("{}\t{}", name, output)))
                 }
+                // Ch16 资源感知：资源决策与消耗（classify/plan/degrade/usage）
+                AgentEvent::Resource { phase, text } => {
+                    Ok(Event::default().event("resource").data(format!("{}:{}", phase, text)))
+                }
                 // Ch15 A2A：text 形如 `from \t to \t content`，前端再按 \t 切三段
                 AgentEvent::A2a { phase, text } => {
                     Ok(Event::default().event("a2a").data(format!("{}:{}", phase, text)))
+                }
+                // Ch14 RAG：检索与注入（retrieve/inject），同构 phase:text
+                AgentEvent::Rag { phase, text } => {
+                    Ok(Event::default().event("rag").data(format!("{}:{}", phase, text)))
                 }
                 AgentEvent::Error(t) => Ok(Event::default().event("error").data(t)),
             },
@@ -706,4 +893,58 @@ async fn self_agent_card(State(state): State<AppState>) -> impl IntoResponse {
         "protocol": "rest+sse",
         "agents_count": state.a2a.len(),
     }))
+}
+
+/// RAG 知识库（Ch14）：列出某会话已灌入的资料（文档 id + 正文）。
+/// 前端「知识库」面板用它刷新当前会话的资料规模与内容。
+async fn list_kb(
+    Path(session): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    let docs = state.kb.docs(&session).await;
+    Json(json!({
+        "session": session,
+        "count": docs.len(),
+        "docs": docs.iter().map(|d| json!({ "id": d.id, "text": d.text })).collect::<Vec<_>>(),
+    }))
+}
+
+/// RAG 知识库（Ch14）：往某会话知识库批量追加资料。
+/// body 形如 `{"docs": ["第一段资料...", "第二段资料..."]}`。
+async fn add_kb(
+    Path(session): Path<String>,
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> impl IntoResponse {
+    let docs = payload
+        .get("docs")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(|t| t.to_string()))
+                .filter(|t| !t.trim().is_empty())
+                .collect::<Vec<String>>()
+        })
+        .unwrap_or_default();
+    if docs.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "请提供非空 docs 数组" })),
+        );
+    }
+    state.kb.add_batch(&session, docs).await;
+    let count = state.kb.len(&session).await;
+    (
+        StatusCode::OK,
+        Json(json!({ "ok": true, "count": count })),
+    )
+}
+
+/// RAG 知识库（Ch14）：清空某会话知识库。
+async fn clear_kb(
+    Path(session): Path<String>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    state.kb.clear(&session).await;
+    Json(json!({ "ok": true, "count": 0 }))
 }

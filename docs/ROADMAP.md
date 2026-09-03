@@ -47,9 +47,9 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M4-Ch12 异常恢复 | ✅ 完成 | `patterns/recovery.rs`（自愈外壳：包裹子模式，监控 Error→整段重试、工具异常→recover、重试耗尽→fallback 单次对话，新增 `Recovery` 事件） |
 | M4-Ch13 人在回路 | ✅ 完成 | `patterns/hitl.rs`（"工具调用前确认"闸口：执行工具前暂停，发 `Hitl{confirm}`，经 `HitlStore`（oneshot）跨请求挂起等用户 approve/reject/edit，新增 `Hitl` 事件；`state.rs` 加 `HitlStore` + `POST /api/sessions/:id/decision` 端点） |
 | M5-Ch15 A2A 通信 | ✅ 完成 | `a2a/mod.rs`（AgentCard 能力卡 / AgentMessage 消息 / AgentRegistry 服务发现）+ `patterns/a2a.rs`（发现→按能力委派→各 Agent 独立执行回传→多轮协商→协调者汇总），新增 `A2a` 事件；`state.rs` 挂 `AgentRegistry`（预置 4 个内建专家）+ `GET/POST /api/a2a/agents` + `GET /.well-known/agent.json` |
-| M4 生产化 | 🟡 部分 | RAG 待做 |
+| M4 生产化 | 🟡 部分 | RAG 已落地（BM25 占位，Retriever trait 已抽象，待挂向量实现） |
 | M5 多智能体 | 🟡 部分 | Ch15 A2A 已落地（能力卡 + 显式消息 + 多轮协商）；护栏(Ch18)/评估(Ch19)/资源优化(Ch16)/推理技术(Ch17) 待做 |
-| 前端面板 | 🟡 部分 | 工作台十四种模式（含记忆/学习适应/目标设定/MCP 工具/异常恢复/人在回路/A2A 协作）可用；**设置页已完成**（think/思考展开/最大轮数），人在回路新增审批面板（批准/驳回/改写），A2A 新增能力卡片编辑器 + 「从 daemon 拉取能力清单」；侧栏 **会话/智能体 仍是占位空壳** |
+| 前端面板 | 🟡 部分 | 工作台十五种模式（含记忆/学习适应/目标设定/MCP 工具/异常恢复/人在回路/A2A 协作）可用；**设置页已完成**（think/思考展开/最大轮数），人在回路新增审批面板（批准/驳回/改写），A2A 新增能力卡片编辑器 + 「从 daemon 拉取能力清单」；侧栏 **会话/智能体 仍是占位空壳** |
 
 ---
 
@@ -72,11 +72,12 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M4 生产化 | Ch12 | 异常恢复 Error Recovery | `patterns/recovery.rs` | ✅ |
 | M4 生产化 | Ch13 | 人在回路 Human-in-the-Loop | `patterns/hitl.rs` + `state.rs`(HitlStore) + `main.rs`(decision 端点) | ✅ |
 | M3 记忆与工具 | Ch5/Ch10 | 工具注册 + MCP | `tools/` | ⬜ |
-| M4 生产化 | Ch14 | RAG（待做） | — | ⬜ |
+| M4 生产化 | Ch14 | RAG（检索增强生成） | `rag/mod.rs`(RagStore+Retriever trait+BM25) + `patterns/rag.rs` + `main.rs`(kb 端点) | ✅ |
 | M5 多智能体 | **Ch15** | A2A 通信 Inter-Agent Communication | `a2a/mod.rs` + `patterns/a2a.rs` + `main.rs`(agents 端点) | ✅ |
-| M5 多智能体 | Ch16-21 | 资源优化 / 推理技术 / 护栏 / 评估 | — | ⬜ |
+| M5 生产化 | **Ch16** | 资源感知优化 Resource-Aware Optimization | `resource/mod.rs` + `patterns/resource_aware.rs` + `llm.rs`(ChatOptions) | ✅ |
+| M5 生产化 | Ch17-21 | 推理技术 / 护栏 / 评估 / 优先级 / 探索发现 | — | ⬜ |
 
-> 建议按书序推进：Ch1~Ch13 已落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路），下一步 Ch14 RAG、Ch15+ 多智能体增强，每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
+> 建议按书序推进：Ch1~Ch16 已落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路、Ch14 RAG、Ch15 A2A、Ch16 资源感知、Ch17 推理技术），下一步 Ch18 护栏 / Ch19 评估 / Ch20 优先级 / Ch21 探索发现，每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
 
 ---
 
@@ -106,6 +107,10 @@ agentOS/
 │       └── recovery.rs           # Ch12 ✅（自愈外壳：重试/恢复/降级 + Recovery 事件）
 │       └── hitl.rs               # Ch13 ✅（人在回路：工具执行前暂停，经 HitlStore 等用户决策 + Hitl 事件）
 │   ├── a2a/mod.rs                  # Ch15 ✅（AgentCard 能力卡 / AgentMessage 消息 / AgentRegistry 服务发现）
+│   ├── resource/mod.rs             # Ch16 ✅（Tier 档位 / Complexity 复杂度 / TierPolicy 策略 / Usage 资源账本）
+│   ├── patterns/resource_aware.rs  # Ch16 ✅（资源感知：分级→选档→执行→降级→兜底→报账）
+│   ├── rag/mod.rs                  # Ch14 ✅（RagStore 进程内知识库 / Retriever trait / BM25 实现）
+│   ├── patterns/rag.rs             # Ch14 ✅（检索增强生成：检索→注入→生成，严格模式可选）
 │   ├── patterns/a2a.rs             # Ch15 ✅（A2A 协作：发现→按能力委派→独立执行回传→多轮协商→汇总）
 │   ├── mcp/mod.rs                  # Ch10 ✅（MCP stdio 客户端：JSON-RPC over 子进程，initialize/list/call）
 │   └── patterns/mcp_tool.rs        # Ch10 ✅（MCP 工具模式：动态发现外部工具 + 提示式调用）
@@ -131,7 +136,7 @@ agentOS/
 ```
 
 ### 事件流约定（前后端契约）
-- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`agent`/`memory`/`profile`/`recovery`/`hitl`/`a2a`/`token`/`thought`/`done`/`error`
+- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`agent`/`memory`/`profile`/`recovery`/`hitl`/`a2a`/`resource`/`token`/`thought`/`done`/`error`
 - Ch15 的 `a2a` 事件体为 `<phase>:<from>\t<to>\t<content>`（详见 `docs/ch15-a2a.md`）
 - 前端 `lib/sse.ts` 解析后按 `ev.event` 渲染
 - **新增 Pattern 时**：加 `AgentEvent` 变体 → `main.rs` 映射 SSE → 前端 `page.tsx` 渲染，三步缺一不可
@@ -171,6 +176,24 @@ agentOS/
 11. **前端别用 Rust 的 `splitn`**：新增 SSE 事件解析时，JS 字符串**没有 `splitn` 方法**（那是 Rust 的）。
     Ch8 的 `memory` 事件曾写成 `ev.data.splitn(2, ":")` 导致浏览器报 `ev.data.splitn is not a function`、整页渲染崩。
     前端切分固定前缀用 `indexOf` + `slice`：`const ci = ev.data.indexOf(":"); phase = slice(0,ci); text = slice(ci+1)`。
+12. **Ollama 的生成参数必须放 `options` 里，放顶层会被静默忽略**（Ch16 挖出，影响所有模式）：
+    `num_predict`、`temperature` 这类参数属于 `options` 对象，直接放请求体顶层**不报错也不生效**。
+    实测同一 prompt + `num_predict:20`：顶层写法输出 626 字符（没生效），`options` 写法输出 28 字符（正确截断）。
+    本项目修复前一直用顶层写法，意味着 `llm.rs` 里那条"num_predict 兜底防失控"**从未真正生效**。
+    注意 `think` 是例外——它是顶层参数，放 `options` 里反而不生效。
+13. **qwen3 的思考会吃光生成预算，导致"只想不答"**（Ch16 挖出）：
+    思考与正文**共用** `num_predict` 配额，且思考优先占用。实测预算 200 + 开思考跑"详细描写春天"，
+    结果思考 528 字符、**正文 0 字符**。故 Ch16 在预算 < 1024 时强制关闭思考
+    （见 `resource::MIN_BUDGET_FOR_THINKING`）。做预算/长度限制时务必考虑这点。
+14. **统计单位别混用**：`num_predict` 是 **token** 上限，而流式输出统计的是**字符**数，
+    直接相除会得出 142%、854% 这类荒谬的"使用率"。Ch16 按 `CHARS_PER_TOKEN=2.0` 粗算并标注"约"。
+15. **BM25 中文分词坑（Ch14 挖出）**：`char::is_alphanumeric()` 对 CJK 汉字返回 `true`，
+    会把整段中文粘成一个 token，导致 BM25 几乎无法匹配。必须用 `is_ascii_alphanumeric()`
+    只把英文/数字当连续词元，中文按单字成词（unigram），召回才正常。
+16. **BM25 的 IDF 会是负值（Ch14 挖出）**：经典概率 IDF 公式 `(N-df+0.5)/(df+0.5)` 的 ln，
+    当某词在几乎所有文档都出现（df 接近 N）时算出来是**负数**，反而"惩罚"了命中该词的文档，
+    使高分文档变负、检索全零命中。工程实现（如 rank_bm25）一律取 `max(0, IDF)`，
+    让"高频但确实命中"的词至少不拖累分数——Ch14 的 `Bm25Retriever` 已按此修正。
 
 ---
 
@@ -178,7 +201,9 @@ agentOS/
 
 | 优先级 | 动作 | 说明 |
 |--------|------|------|
-| 高 | **Ch14 RAG（知识检索）** | 书序上唯一的缺口（Ch15 已完成）。注意本地只装了 `qwen3:8b`、**没有 embedding 模型**：建议先用 BM25 关键词检索并抽象出 `Retriever` trait，之后若 pull 到 `nomic-embed-text` 再挂向量实现，pattern 代码不用改 |
+| 中 | **Ch14 升级为向量检索** | Ch14 已用 BM25 落地并抽象了 `Retriever` trait。本地只有 `qwen3:8b`、无 embedding 模型；若 pull 到 `nomic-embed-text`，只需新增一个 `VectorRetriever` 实现该 trait，`patterns/rag.rs` 零改动即可升级为语义检索 |
+| 中 | **Ch17 推理技术** | 书序上的下一章（Ch16 已完成）。CoT / ReAct / ToT 等，可复用 Ch16 的档位机制——深度推理才开思考 |
+| 中 | **给 Ch16 配第二个模型** | 当前三档共用 qwen3:8b，档位差异只体现在思考与生成上限上。pull 一个 1.5B 级小模型填进 `tier_policy.light.model`，才是书里完整的"动态模型切换" |
 | 中 | **A2A 远程化（Ch15 深化）** | 当前所有 Agent 仍在进程内；可起第二个 agentd 实例，通过 `AgentCard.endpoint` 走 HTTP 真正跨进程调用，届时注册表才名副其实 |
 | 中 | **补侧栏 会话/智能体 页面** | 设置页已完成；会话/智能体仍是空壳，让面板更完整 |
 | 中 | **路由健壮性增强** | 分类器输出 JSON（含 reason）、兜底/拒识路由 |
@@ -255,7 +280,29 @@ curl -s -N -X POST http://localhost:8090/api/sessions/a2atest/run -H 'Content-Ty
                  {"name":"撰稿人","description":"擅长把结论组织成通顺可交付的文字","skills":["文案撰写"]}]}' \
   --max-time 240 | grep -E "^event:" | sort | uniq -c
 
-# 12) 前端
+# 12) 资源感知（Ch16）：简单问题应走轻量档、复杂问题走深度档（开思考）
+curl -s -N -X POST http://localhost:8090/api/sessions/t/run -H 'Content-Type: application/json' \
+  -d '{"input":"中国的首都是哪里？","pattern":"resource_aware"}' --max-time 100 | grep -A1 "^event: resource"
+# 预算约束：同题对比无预算 vs token_budget=200（后者应显著更快更短）
+curl -s -N -X POST http://localhost:8090/api/sessions/t/run -H 'Content-Type: application/json' \
+  -d '{"input":"请详细描写春天的景象，越详细越好","pattern":"resource_aware","token_budget":200}' \
+  --max-time 150 | grep -A1 "^event: resource"
+# 降级：深度档配一个不存在的模型，应看到 degrade 事件
+curl -s -N -X POST http://localhost:8090/api/sessions/t/run -H 'Content-Type: application/json' \
+  -d '{"input":"分析端侧与云端模型的取舍","pattern":"resource_aware",
+       "tier_policy":{"deep":{"model":"no-such-model:999b"}}}' --max-time 200 | grep -A1 "^event: resource"
+
+# 14) RAG（Ch14）：先灌库、再检索增强问答
+SID=$(curl -s -X POST http://localhost:8090/api/sessions | python3 -c "import sys,json;print(json.load(sys.stdin)['session_id'])")
+curl -s -X POST http://localhost:8090/api/sessions/$SID/kb -H 'Content-Type: application/json' \
+  -d '{"docs":["agentOS 是一个以 Agent 为原生执行单元的操作系统原型，由 Rust daemon(agentd) 与 Next.js 前端(web) 组成。","agentd 用 axum 0.7 提供 REST+SSE 接口，默认端口 8090；通过 Ollama 本地运行 qwen3:8b 模型。"]}' 
+curl -s -N -X POST http://localhost:8090/api/sessions/$SID/run -H 'Content-Type: application/json' \
+  -d '{"input":"agentd 用的是什么框架、监听哪个端口？","pattern":"rag","top_k":3}' --max-time 60 | grep -A1 "^event: rag"
+# 严格模式 + 无关问题：应看到「知识库无可用资料，直接说明无法回答」
+curl -s -N -X POST http://localhost:8090/api/sessions/$SID/run -H 'Content-Type: application/json' \
+  -d '{"input":"如何做红烧肉？","pattern":"rag","top_k":3,"strict":true}' --max-time 40 | grep -A1 "^event: rag"
+
+# 13) 前端
 curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 ```
 
@@ -277,7 +324,9 @@ curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 - `docs/ch12-recovery.md` — Ch12 总结（自愈外壳：重试/恢复/降级 + Recovery 事件）
 - `docs/ch13-hitl.md` — Ch13 总结（人在回路：工具执行前确认闸口 + Hitl 事件 + decision 端点）
 - `docs/ch15-a2a.md` — Ch15 总结（A2A：AgentCard 能力卡 + 显式消息 + 按需委派 + 多轮协商 + A2a 事件）
+- `docs/ch16-resource-aware.md` — Ch16 总结（资源感知：档位策略 + 复杂度分级 + 预算约束 + 优雅降级，含两个 Ollama 坑）
+- `docs/ch14-rag.md` — Ch14 总结（检索增强生成：BM25 + Retriever trait 抽象 + 知识库按会话隔离 + 严格模式 + 两个 BM25 坑）
 
 ---
 
-*最后更新：2026-08-31。状态：Ch1~Ch13 全部落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路），Ch15 A2A 通信已落地（能力卡 + 显式消息 + 按需委派 + 多轮协商 + 服务发现端点），前端工作台十四种模式可用（人在回路含审批面板，A2A 含能力卡编辑与一键拉取清单），设置页完成，侧栏 会话/智能体 待补，下一步 Ch14 RAG（书序上唯一的缺口）。*
+*最后更新：2026-09-01。状态：Ch1~Ch16 全部落地（含 Ch14 RAG 检索增强生成：BM25 + Retriever trait 抽象 + 按会话隔离知识库 + 严格模式；Ch16 资源感知：三档策略 + 复杂度分级 + 预算约束 + 优雅降级；Ch17 推理技术已落地），前端工作台十六种模式可用（新增「RAG」「资源优化」「推理技术」），设置页完成，侧栏 会话/智能体 待补。Ch14 期间挖出并修复两个 BM25 坑（中文分词、IDF 负值），Ch16 期间挖出两个影响全局的 Ollama 坑（num_predict 必须放 options、思考会吃光生成预算），见「已踩的坑」12~16。下一步 Ch14 升级向量检索（pull embedding 模型后换 Retriever 实现）或 Ch18 护栏 / Ch19 评估。*

@@ -40,6 +40,14 @@ pub enum AgentEvent {
     /// "confirm"（请求确认，将挂起等待）/ "approved"（已批准，继续）/
     /// "rejected"（已驳回）/ "edited"（已改写参数）/ "proceed"（无需确认直接继续）
     Hitl { phase: String, text: String },
+    /// 资源感知优化（Ch16）：资源决策与消耗的可观测化，phase 为
+    /// "classify"（复杂度分级结果）/ "plan"（选中的档位与预算）/
+    /// "degrade"（降级到更省的档位）/ "usage"（最终消耗统计）。
+    Resource { phase: String, text: String },
+    /// 检索增强生成（Ch14 RAG 用）：检索与上下文注入的可观测化，phase 为
+    /// "retrieve"（BM25 召回的相关片段）/ "inject"（注入上下文的规模）。
+    /// text 为召回摘要或注入统计，前端渲染成"检索到了什么 / 喂了什么进模型"。
+    Rag { phase: String, text: String },
     /// Agent 间通信（Ch15 A2A 用）：一条消息的流动，phase 为
     /// "discover"（协调者发现可用 Agent）/ "request"（协调者委派子任务）/
     /// "response"（Agent 回传结果）/ "negotiate"（多轮协商修订）。

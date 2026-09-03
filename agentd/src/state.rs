@@ -6,6 +6,7 @@ use tokio::sync::{oneshot, RwLock, Mutex};
 use crate::a2a::AgentRegistry;
 use crate::config::Config;
 use crate::memory::{MemoryStore, ProfileStore};
+use crate::rag::RagStore;
 
 /// 人在回路（Ch13）的用户决策。
 /// - action: "approve"（批准）/ "reject"（驳回）/ "edit"（改写参数）
@@ -60,6 +61,8 @@ pub struct AppState {
     pub hitl: HitlStore,
     /// Ch15 A2A：可被发现的 Agent 能力卡片注册表（服务发现层）
     pub a2a: AgentRegistry,
+    /// Ch14 RAG：按会话隔离的知识库（检索增强生成的资料来源）
+    pub kb: RagStore,
 }
 
 impl AppState {
@@ -75,6 +78,8 @@ impl AppState {
             hitl: HitlStore::new(),
             // A2A：预置内建专家，让 A2A 模式开箱即用
             a2a: AgentRegistry::with_builtin(),
+            // RAG：每个会话最多保留 200 条文档，超出丢弃最旧
+            kb: RagStore::new(200),
         }
     }
 }

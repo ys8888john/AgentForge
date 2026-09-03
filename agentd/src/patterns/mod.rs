@@ -19,3 +19,6 @@ pub mod mcp_tool;
 pub mod recovery;
 pub mod hitl;
 pub mod a2a;
+pub mod reasoning;
+pub mod resource_aware;
+pub mod rag;
