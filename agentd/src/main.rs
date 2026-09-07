@@ -7,6 +7,7 @@ mod mcp;
 mod a2a;
 mod resource;
 mod rag;
+mod guardrails;
 mod patterns;
 
 use std::convert::Infallible;
@@ -43,6 +44,8 @@ use patterns::a2a::A2aConfig;
 use patterns::resource_aware::ResourceAwareConfig;
 use patterns::reasoning::ReasoningConfig;
 use patterns::rag::RagConfig;
+use patterns::guardrail::GuardrailPatternConfig;
+use guardrails::GuardrailConfig;
 use resource::TierOverride;
 use state::{AppState, HitlDecision};
 
@@ -479,6 +482,57 @@ fn parse_rag(payload: &Value) -> RagConfig {
     RagConfig { top_k, strict }
 }
 
+/// 从请求体解析护栏配置（Ch18 护栏用）：
+/// check_injection / max_input_chars / blocked_words / block_output /
+/// tool_allowlist / tool_denylist / inner_pattern
+fn parse_guardrail(payload: &Value) -> GuardrailPatternConfig {
+    let check_injection = payload
+        .get("check_injection")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let max_input_chars = payload
+        .get("max_input_chars")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0) as usize;
+    let block_output = payload
+        .get("block_output")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let inner_pattern = payload
+        .get("inner_pattern")
+        .and_then(|v| v.as_str())
+        .unwrap_or("single")
+        .to_string();
+
+    // 敏感词 / 名单都支持数组或逗号分隔字符串两种写法（前端两种都可能出现）
+    let parse_list = |key: &str| -> Vec<String> {
+        match payload.get(key) {
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .filter_map(|s| s.as_str().map(|t| t.to_string()))
+                .collect(),
+            Some(Value::String(s)) => s
+                .split(',')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect(),
+            _ => Vec::new(),
+        }
+    };
+
+    GuardrailPatternConfig {
+        guard: GuardrailConfig {
+            check_injection,
+            max_input_chars,
+            blocked_words: parse_list("blocked_words"),
+            block_output,
+            tool_allowlist: parse_list("tool_allowlist"),
+            tool_denylist: parse_list("tool_denylist"),
+        },
+        inner_pattern,
+    }
+}
+
 /// 从请求体解析工具调用配置（Ch5 工具调用用）：tools / max_rounds
 fn parse_tool_use(payload: &Value) -> ToolUseConfig {
     let tools = payload
@@ -605,6 +659,16 @@ async fn run_task(
             input,
             cfg,
             state.kb.clone(),
+        ))
+    } else if pattern == "guardrail" {
+        // 第十八章护栏：包裹一个子模式，执行前后按规则拦截（输入/输出/工具三层）
+        let gc = parse_guardrail(&payload);
+        Box::pin(patterns::guardrail::run(
+            gc,
+            payload.clone(),
+            _id.clone(),
+            cfg,
+            state.clone(),
         ))
     } else if pattern == "memory" {
         let recall_k = payload
@@ -805,6 +869,10 @@ async fn run_task(
                 // Ch14 RAG：检索与注入（retrieve/inject），同构 phase:text
                 AgentEvent::Rag { phase, text } => {
                     Ok(Event::default().event("rag").data(format!("{}:{}", phase, text)))
+                }
+                // Ch18 护栏：规则检查与拦截（check/pass/block/warn/redact）
+                AgentEvent::Guardrail { phase, text } => {
+                    Ok(Event::default().event("guardrail").data(format!("{}:{}", phase, text)))
                 }
                 AgentEvent::Error(t) => Ok(Event::default().event("error").data(t)),
             },

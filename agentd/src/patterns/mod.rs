@@ -22,3 +22,4 @@ pub mod a2a;
 pub mod reasoning;
 pub mod resource_aware;
 pub mod rag;
+pub mod guardrail;

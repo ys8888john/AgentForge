@@ -44,6 +44,10 @@ pub enum AgentEvent {
     /// "classify"（复杂度分级结果）/ "plan"（选中的档位与预算）/
     /// "degrade"（降级到更省的档位）/ "usage"（最终消耗统计）。
     Resource { phase: String, text: String },
+    /// 护栏 / 安全模式（Ch18 用）：规则检查与拦截的可观测化，phase 为
+    /// "check"（开始检查）/ "pass"（通过）/ "block"（已拦截）/
+    /// "warn"（提示级命中，未阻断）/ "redact"（输出已脱敏）。
+    Guardrail { phase: String, text: String },
     /// 检索增强生成（Ch14 RAG 用）：检索与上下文注入的可观测化，phase 为
     /// "retrieve"（BM25 召回的相关片段）/ "inject"（注入上下文的规模）。
     /// text 为召回摘要或注入统计，前端渲染成"检索到了什么 / 喂了什么进模型"。

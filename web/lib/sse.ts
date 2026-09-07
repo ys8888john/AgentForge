@@ -69,6 +69,18 @@ export interface RunOptions {
   top_k?: number;
   /** RAG（Ch14）：严格模式——无资料时只说明无法回答，不臆造 */
   strict?: boolean;
+  /** 护栏（Ch18）：输入侧是否启用提示注入检测 */
+  check_injection?: boolean;
+  /** 护栏（Ch18）：输入最大字符数（0=不限制） */
+  max_input_chars?: number;
+  /** 护栏（Ch18）：输出侧敏感词（命中即拦截/脱敏） */
+  blocked_words?: string[];
+  /** 护栏（Ch18）：命中敏感词时阻断(true)还是仅提示(false) */
+  block_output?: boolean;
+  /** 护栏（Ch18）：工具白名单（仅允许这些工具） */
+  tool_allowlist?: string[];
+  /** 护栏（Ch18）：工具黑名单（禁止这些工具） */
+  tool_denylist?: string[];
 }
 
 /**
