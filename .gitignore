@@ -1,6 +1,12 @@
 # Rust
+# target 是 cargo 的编译产物目录（体积大、可重建，绝不入库）
 agentd/target/
+**/target/
 **/*.rs.bk
+*.pdb
+
+# 本地调试/测试用的临时可执行文件（如 gdb 调试时产出的 ELF）
+agentd/v3
 
 # Node / Next.js
 web/node_modules/
@@ -8,6 +14,14 @@ web/.next/
 web/out/
 web/.turbo/
 *.tsbuildinfo
+web/.env*.local
+.vercel
+
+# Python（MCP server 用）
+__pycache__/
+*.py[cod]
+venv/
+.venv/
 
 # Logs & temp
 *.log
@@ -18,6 +32,18 @@ web/.turbo/
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# IDE / 编辑器（含本地绝对路径，不适合入库）
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试与覆盖率产物
+coverage/
+*.profraw
 
 # Env
 .env
