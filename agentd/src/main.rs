@@ -9,6 +9,7 @@ mod resource;
 mod rag;
 mod guardrails;
 mod eval;
+mod priority;
 mod patterns;
 
 use std::convert::Infallible;
@@ -48,6 +49,7 @@ use patterns::rag::RagConfig;
 use patterns::guardrail::GuardrailPatternConfig;
 use guardrails::GuardrailConfig;
 use eval::{parse_cases, parse_eval_config, build_scorers, score_one, aggregate, EvalReport};
+use priority::{parse_tasks, parse_priority_config};
 use resource::TierOverride;
 use state::{AppState, HitlDecision};
 
@@ -682,6 +684,16 @@ async fn run_task(
             cfg,
             state.clone(),
         ))
+    } else if pattern == "prioritizer" {
+        // 第二十章优先级：多任务排序后按序调度执行
+        // 注：parse_priority_config/parse_tasks 在 run 内部已解析，这里仅触发导入不报错
+        let _ = (parse_priority_config(&payload), parse_tasks(&payload));
+        Box::pin(patterns::prioritizer::run(
+            payload.clone(),
+            _id.clone(),
+            cfg,
+            state.clone(),
+        ))
     } else if pattern == "memory" {
         let recall_k = payload
             .get("recall_k")
@@ -889,6 +901,10 @@ async fn run_task(
                 // Ch19 评估：批量/交互评测（start/score/dim/done/report）
                 AgentEvent::Eval { phase, text } => {
                     Ok(Event::default().event("eval").data(format!("{}:{}", phase, text)))
+                }
+                // Ch20 优先级：任务排序与调度（rank/select/skip/execute/done/error）
+                AgentEvent::Priority { phase, text } => {
+                    Ok(Event::default().event("priority").data(format!("{}:{}", phase, text)))
                 }
                 AgentEvent::Error(t) => Ok(Event::default().event("error").data(t)),
             },

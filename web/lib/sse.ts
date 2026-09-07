@@ -91,6 +91,12 @@ export interface RunOptions {
   sensitive_words?: string;
   /** 评估（Ch19）：期望输出为合法 JSON */
   expect_json?: boolean;
+  /** 优先级（Ch20）：排序策略 importance_urgency/cost_efficiency/dependency_aware */
+  strategy?: string;
+  /** 优先级（Ch20）：成本预算上限（0=不限制） */
+  cost_budget?: number;
+  /** 优先级（Ch20）：冲突时跳过低优任务 */
+  skip_on_conflict?: boolean;
 }
 
 /**

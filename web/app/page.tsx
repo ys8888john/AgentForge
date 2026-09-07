@@ -24,6 +24,7 @@ type Block = {
     | "rag"
     | "guardrail"
     | "eval"
+    | "priority"
     | "thought"
     | "token"
     | "done"
@@ -51,7 +52,8 @@ type Mode =
   | "reasoning"
   | "rag"
   | "guardrail"
-  | "evaluator";
+  | "evaluator"
+  | "prioritizer";
 
 export default function Page() {
   const [mode, setMode] = useState<Mode>("single");
@@ -145,6 +147,13 @@ export default function Page() {
   const [checkSensitive, setCheckSensitive] = useState(true);
   const [sensitiveWords, setSensitiveWords] = useState("");
   const [expectJson, setExpectJson] = useState(false);
+  // 优先级（Ch20）：多任务（每行一个，格式：描述|重要度|紧急度|成本|依赖,逗号分隔）
+  const [prioTasks, setPrioTasks] = useState(
+    "写一首关于春天的诗|2|2|3|\n总结今天的重要新闻|5|4|5|\n计算 123*456|4|5|1|"
+  );
+  const [prioStrategy, setPrioStrategy] = useState("importance_urgency");
+  const [costBudget, setCostBudget] = useState(0);
+  const [skipOnConflict, setSkipOnConflict] = useState(false);
   // HITL 待确认块：非空时渲染审批按钮，供用户批准/驳回/改写
   const [confirmBlock, setConfirmBlock] = useState<{ sessionId: string; text: string } | null>(null);
   const [editArgs, setEditArgs] = useState("");
@@ -343,6 +352,33 @@ export default function Page() {
           inner_pattern:
             mode === "evaluator" ? evalInner : undefined,
           expect_json: mode === "evaluator" ? expectJson : undefined,
+          // 优先级（Ch20）：多任务调度
+          strategy: mode === "prioritizer" ? prioStrategy : undefined,
+          cost_budget:
+            mode === "prioritizer" && costBudget > 0 ? costBudget : undefined,
+          skip_on_conflict: mode === "prioritizer" ? skipOnConflict : undefined,
+          tasks:
+            mode === "prioritizer"
+              ? prioTasks
+                  .split("\n")
+                  .map((l) => l.trim())
+                  .filter(Boolean)
+                  .map((line, i) => {
+                    const [description, imp, urg, cost, dep] = line
+                      .split("|")
+                      .map((s) => s.trim());
+                    const t: any = { id: `task-${i + 1}`, description };
+                    if (imp) t.importance = parseInt(imp, 10) || 3;
+                    if (urg) t.urgency = parseInt(urg, 10) || 3;
+                    if (cost) t.cost = parseInt(cost, 10) || 3;
+                    if (dep)
+                      t.depends_on = dep
+                        .split(",")
+                        .map((s) => s.trim())
+                        .filter(Boolean);
+                    return t;
+                  })
+              : undefined,
           // 批量评测走 /api/eval（在 handleRun 里单独处理），这里只传交互式所需字段
           think: settings.think,
         },
@@ -542,6 +578,22 @@ export default function Page() {
                 ? "📋 汇总报告"
                 : "✅ 评估完成";
             setOutput((p) => [...p, { kind: "eval", text: `${label} · ${text}` }]);
+          } else if (ev.event === "priority") {
+            // 数据格式：`phase:text`
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const text = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            const label =
+              phase === "rank"
+                ? "📋 任务排序"
+                : phase === "select"
+                ? "▶️ 执行中"
+                : phase === "skip"
+                ? "⏭️ 已跳过"
+                : phase === "execute"
+                ? "✅ 任务完成"
+                : "🏁 调度完成";
+            setOutput((p) => [...p, { kind: "priority", text: `${label} · ${text}` }]);
           } else if (ev.event === "route") {
             const [name, raw] = ev.data.split("\t");
             setOutput((p) => [
@@ -808,6 +860,12 @@ export default function Page() {
             onClick={() => setMode("evaluator")}
           >
             评估
+          </button>
+          <button
+            className={mode === "prioritizer" ? "mode active" : "mode"}
+            onClick={() => setMode("prioritizer")}
+          >
+            优先级
           </button>
         </div>
 
@@ -1982,6 +2040,90 @@ export default function Page() {
             </div>
           </div>
         )}
+
+        {mode === "prioritizer" && (
+          <div className="steps">
+            <div className="routing-hint">
+              优先级（Ch20）= 给 Agent 装<strong>任务调度器</strong>：同时面对多个任务且会冲突时，
+              按「重要度 × 紧急度 − 成本」打分排序，<strong>先做高优先、缓做低优</strong>。
+              <br />
+              与「评估」的区别：评估是<strong>事后批量打分</strong>（质量好不好）；优先级是<strong>执行前排序</strong>（谁先谁后）。
+              与「规划」的区别：规划是<strong>单目标拆步骤</strong>；优先级是<strong>多目标排次序</strong>。
+              <br />
+              排序器抽象成 <code>Prioritizer</code> trait（与 Ch14/18/19 同套路），将来接「LLM 判任务重要性」只需新增一个实现。
+              <br />
+              <strong>用法</strong>：下方每行写一条任务，格式 <code>描述|重要度|紧急度|成本|依赖</code>（竖线分隔，空项留空）；
+              点「运行」即按序调度执行，下方以「优先级」块展示排序与执行顺序。
+            </div>
+            <div className="routing-hint">
+              任务集（每行一条，格式：<code>描述|重要度(1-5)|紧急度(1-5)|成本(1-10)|依赖(逗号分隔)</code>）：
+            </div>
+            <textarea
+              className="step-prompt"
+              style={{ width: "100%", minHeight: 120 }}
+              value={prioTasks}
+              onChange={(e) => setPrioTasks(e.target.value)}
+              placeholder={"写诗|2|2|3|\n总结新闻|5|4|5|\n算账|4|5|1|"}
+            />
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">排序策略</div>
+                <div className="setting-desc">
+                  importance_urgency：重要×紧急归一化（默认）；
+                  cost_efficiency：价值/成本，鼓励高价值低成本；
+                  dependency_aware：依赖感知，无依赖任务优先。
+                </div>
+              </div>
+              <select
+                className="setting-num"
+                value={prioStrategy}
+                onChange={(e) => setPrioStrategy(e.target.value)}
+              >
+                <option value="importance_urgency">重要度×紧急度</option>
+                <option value="cost_efficiency">成本效益</option>
+                <option value="dependency_aware">依赖感知</option>
+              </select>
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">成本预算上限</div>
+                <div className="setting-desc">
+                  所有任务 cost 之和超过该值时，从最低优先开始舍弃（0=不限制）。
+                </div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={0}
+                max={100}
+                step={1}
+                value={costBudget}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  setCostBudget(Number.isFinite(v) ? Math.max(0, v) : 0);
+                }}
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">冲突时跳过低优</div>
+                <div className="setting-desc">
+                  资源受限时，跳过低优先级任务而非排队执行（保留扩展点）。
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                className="setting-num"
+                checked={skipOnConflict}
+                onChange={(e) => setSkipOnConflict(e.target.checked)}
+              />
+            </label>
+            <div className="routing-hint">
+              <strong>试试</strong>：写「计算 123*456」(重要4/紧急5/成本1) 会排第一，「写诗」(2/2/3) 排最后；
+              给某任务加 <code>depends_on</code> 则该任务排到依赖之后。
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="input-row">
@@ -2026,6 +2168,9 @@ export default function Page() {
             )}
             {b.kind === "eval" && (
               <div className="eval-label">🧪 {b.text}</div>
+            )}
+            {b.kind === "priority" && (
+              <div className="priority-label">📊 {b.text}</div>
             )}
             {b.kind === "thought" && (
               <details className="thought" open={settings.thoughtOpen}>

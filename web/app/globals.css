@@ -415,6 +415,18 @@ body {
   margin: 10px 0 4px;
   white-space: pre-wrap;
 }
+/* Ch20 优先级：任务排序 / 执行 / 跳过 / 完成进度 */
+.priority-label {
+  color: #5a4b8b;
+  font-weight: 600;
+  font-size: 13px;
+  background: #efeaf8;
+  border: 1px dashed #9a86d6;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
 /* HITL 审批面板 */
 .hitl-confirm {
   margin: 12px 0;

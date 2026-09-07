@@ -48,7 +48,7 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M4-Ch13 人在回路 | ✅ 完成 | `patterns/hitl.rs`（"工具调用前确认"闸口：执行工具前暂停，发 `Hitl{confirm}`，经 `HitlStore`（oneshot）跨请求挂起等用户 approve/reject/edit，新增 `Hitl` 事件；`state.rs` 加 `HitlStore` + `POST /api/sessions/:id/decision` 端点） |
 | M5-Ch15 A2A 通信 | ✅ 完成 | `a2a/mod.rs`（AgentCard 能力卡 / AgentMessage 消息 / AgentRegistry 服务发现）+ `patterns/a2a.rs`（发现→按能力委派→各 Agent 独立执行回传→多轮协商→协调者汇总），新增 `A2a` 事件；`state.rs` 挂 `AgentRegistry`（预置 4 个内建专家）+ `GET/POST /api/a2a/agents` + `GET /.well-known/agent.json` |
 | M4 生产化 | 🟡 部分 | RAG 已落地（BM25 占位，Retriever trait 已抽象，待挂向量实现） |
-| M5 多智能体 | 🟡 部分 | Ch15 A2A 已落地（能力卡 + 显式消息 + 多轮协商）；Ch18 护栏已落地（规则引擎三层）；Ch19 评估已落地（Scorer trait + 批量评测端点）；优先级(Ch20)/探索发现(Ch21) 待做 |
+| M5 多智能体 | 🟡 部分 | Ch15 A2A 已落地（能力卡 + 显式消息 + 多轮协商）；Ch18 护栏已落地（规则引擎三层）；Ch19 评估已落地（Scorer trait + 批量评测端点）；**Ch20 优先级已落地**（Prioritizer trait + 拓扑排序 + 成本预算裁剪）；探索发现(Ch21) 待做 |
 | 前端面板 | 🟡 部分 | 工作台十五种模式（含记忆/学习适应/目标设定/MCP 工具/异常恢复/人在回路/A2A 协作）可用；**设置页已完成**（think/思考展开/最大轮数），人在回路新增审批面板（批准/驳回/改写），A2A 新增能力卡片编辑器 + 「从 daemon 拉取能力清单」；侧栏 **会话/智能体 仍是占位空壳** |
 
 ---
@@ -75,9 +75,9 @@ agentOS 是一个**以 Agent 为原生执行单元的操作系统**原型：后�
 | M4 生产化 | Ch14 | RAG（检索增强生成） | `rag/mod.rs`(RagStore+Retriever trait+BM25) + `patterns/rag.rs` + `main.rs`(kb 端点) | ✅ |
 | M5 多智能体 | **Ch15** | A2A 通信 Inter-Agent Communication | `a2a/mod.rs` + `patterns/a2a.rs` + `main.rs`(agents 端点) | ✅ |
 | M5 生产化 | **Ch16** | 资源感知优化 Resource-Aware Optimization | `resource/mod.rs` + `patterns/resource_aware.rs` + `llm.rs`(ChatOptions) | ✅ |
-| M5 生产化 | Ch17-21 | 推理技术 / 护栏 / 评估 / 优先级 / 探索发现 | `patterns/reasoning.rs`✅ + `guardrails/mod.rs`/`patterns/guardrail.rs`✅ + `eval/mod.rs`/`patterns/evaluator.rs`✅；Ch20~21 待做 | 🟡 |
+| M5 生产化 | Ch17-21 | 推理技术 / 护栏 / 评估 / 优先级 / 探索发现 | `patterns/reasoning.rs`✅ + `guardrails/mod.rs`/`patterns/guardrail.rs`✅ + `eval/mod.rs`/`patterns/evaluator.rs`✅；**Ch20 优先级 ✅**（`priority/mod.rs`+`patterns/prioritizer.rs`）；Ch21 待做 | 🟡 |
 
-> 建议按书序推进：Ch1~Ch19 已落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路、Ch14 RAG、Ch15 A2A、Ch16 资源感知、Ch17 推理技术、Ch18 护栏、Ch19 评估与监控），下一步 Ch20 优先级 / Ch21 探索发现，每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
+> 建议按书序推进：Ch1~Ch20 已落地（含 Ch10 MCP 工具、Ch12 异常恢复、Ch13 人在回路、Ch14 RAG、Ch15 A2A、Ch16 资源感知、Ch17 推理技术、Ch18 护栏、Ch19 评估与监控、Ch20 优先级），下一步 Ch21 探索发现，每章一个 `patterns/*.rs` + 前端模式 + 一篇 `docs/chN-*.md`。
 
 ---
 
@@ -89,11 +89,11 @@ agentOS/
 │   ├── main.rs              # 入口 + axum 路由 + run_task 按 pattern 分发 + SSE 映射
 │   ├── config.rs            # 配置（.env：LISTEN_ADDR / OLLAMA_BASE_URL / OLLAMA_MODEL）
 │   ├── llm.rs               # 流式调用 Ollama；产出 Chunk::Content / Chunk::Reasoning
-│   ├── events.rs            # AgentEvent 枚举（Step/Route/Worker/Reflect/Revision/ToolCall/ToolResult/Plan/Agent/Memory/Profile/Recovery/Hitl/Token/Thought/Done/Error）
+│   ├── events.rs            # AgentEvent 枚举（Step/Route/Worker/Reflect/Revision/ToolCall/ToolResult/Plan/Agent/Memory/Profile/Recovery/Hitl/A2a/Resource/Rag/Guardrail/Eval/Priority/Token/Thought/Done/Error）
 │   ├── state.rs             # AppState + MemoryStore/ProfileStore/HitlStore（HitlStore：oneshot 跨请求挂起/唤醒，Ch13）
 │   ├── memory/mod.rs         # Ch8 ✅ 记忆存储（按会话 MemoryStore，进程内、带容量上限）；Ch9 ✅ 偏好画像 ProfileStore（同结构）
 │   └── patterns/
-│       ├── mod.rs           # 声明 prompt_chaining / routing / parallelization / reflection / tool_use / planning / multi_agent / memory / learning / goal_setting / mcp_tool / recovery / hitl
+│       ├── mod.rs           # 声明 prompt_chaining / routing / parallelization / reflection / tool_use / planning / multi_agent / memory / learning / goal_setting / mcp_tool / recovery / hitl / rag / a2a / resource_aware / guardrail / evaluator / prioritizer
 │       ├── prompt_chaining.rs   # Ch1 ✅
 │       ├── routing.rs           # Ch2 ✅（含描述增强）
 │       ├── parallelization.rs   # Ch3 ✅
@@ -106,6 +106,8 @@ agentOS/
 │       └── goal_setting.rs        # Ch11 ✅（目标设定：规划→执行→自检达成→带进展重规划 + Plan/Step/Reflect/Done 事件）
 │       └── recovery.rs           # Ch12 ✅（自愈外壳：重试/恢复/降级 + Recovery 事件）
 │       └── hitl.rs               # Ch13 ✅（人在回路：工具执行前暂停，经 HitlStore 等用户决策 + Hitl 事件）
+│   ├── priority/mod.rs             # Ch20 ✅（Task / PriorityConfig / Prioritizer trait / 三种排序器 / compute_levels / rank_tasks / apply_cost_budget）
+│   ├── patterns/prioritizer.rs      # Ch20 ✅（优先级外壳：排序→选择→执行→完成，发 Priority 事件）
 │   ├── a2a/mod.rs                  # Ch15 ✅（AgentCard 能力卡 / AgentMessage 消息 / AgentRegistry 服务发现）
 │   ├── resource/mod.rs             # Ch16 ✅（Tier 档位 / Complexity 复杂度 / TierPolicy 策略 / Usage 资源账本）
 │   ├── patterns/resource_aware.rs  # Ch16 ✅（资源感知：分级→选档→执行→降级→兜底→报账）
@@ -120,7 +122,7 @@ agentOS/
 │   └── patterns/mcp_tool.rs        # Ch10 ✅（MCP 工具模式：动态发现外部工具 + 提示式调用）
 │   └── mcp_servers/demo_server.py  # Ch10 演示用 MCP server（Python，暴露 calculator/current_time/get_weather）
 ├── web/
-│   ├── app/page.tsx         # 工作台（十三种模式：单次/提示链/路由/并行化/反思/工具调用/规划/多智能体/记忆/学习适应/目标设定/MCP/异常恢复/人在回路；含 HITL 审批面板 + 流式输出）
+│   ├── app/page.tsx         # 工作台（十九种模式：单次/提示链/路由/并行化/反思/工具调用/规划/多智能体/记忆/学习适应/目标设定/MCP/异常恢复/人在回路/A2A/RAG/资源优化/推理/护栏/评估/优先级；含 HITL 审批面板 + 流式输出）
 │   ├── app/globals.css      # 宝塔风格样式
 │   ├── app/layout.tsx       # 侧栏 + 主区 + SettingsProvider
 │   ├── app/Sidebar.tsx      # 侧栏导航（工作台/会话/智能体/设置）
@@ -140,7 +142,7 @@ agentOS/
 ```
 
 ### 事件流约定（前后端契约）
-- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`agent`/`memory`/`profile`/`recovery`/`hitl`/`a2a`/`resource`/`rag`/`guardrail`/`eval`/`token`/`thought`/`done`/`error`
+- 后端 `AgentEvent` → SSE 事件：`step`/`route`/`worker`/`reflect`/`revision`/`tool_call`/`tool_result`/`plan`/`agent`/`memory`/`profile`/`recovery`/`hitl`/`a2a`/`resource`/`rag`/`guardrail`/`eval`/`priority`/`token`/`thought`/`done`/`error`
 - Ch15 的 `a2a` 事件体为 `<phase>:<from>\t<to>\t<content>`（详见 `docs/ch15-a2a.md`）
 - 前端 `lib/sse.ts` 解析后按 `ev.event` 渲染
 - **新增 Pattern 时**：加 `AgentEvent` 变体 → `main.rs` 映射 SSE → 前端 `page.tsx` 渲染，三步缺一不可
@@ -213,7 +215,7 @@ agentOS/
 | 优先级 | 动作 | 说明 |
 |--------|------|------|
 | 中 | **Ch14 升级为向量检索** | Ch14 已用 BM25 落地并抽象了 `Retriever` trait。本地只有 `qwen3:8b`、无 embedding 模型；若 pull 到 `nomic-embed-text`，只需新增一个 `VectorRetriever` 实现该 trait，`patterns/rag.rs` 零改动即可升级为语义检索 |
-| 中 | **Ch20 优先级** | 书序上的下一章（Ch19 评估已完成）。多任务/多目标冲突时先做哪个，可做成"优先级调度外壳"；评估器已能量化"哪个方案更优"，可与优先级联动 |
+| 中 | **Ch20 优先级 ✅ 已完成** | 多任务/多目标冲突时先做哪个，做成"优先级调度外壳"（Prioritizer trait + 拓扑排序 + 成本预算裁剪）；见 `docs/ch20-prioritization.md` |
 | 中 | **Ch18 接入分类模型** | 当前护栏是规则引擎（关键词/注入模式/名单）。生产级应叠加专用分类模型（如 Llama Guard）；已抽象 `Rule` trait，新增一个实现即可，模式代码零改动 |
 | 中 | **给 Ch16 配第二个模型** | 当前三档共用 qwen3:8b，档位差异只体现在思考与生成上限上。pull 一个 1.5B 级小模型填进 `tier_policy.light.model`，才是书里完整的"动态模型切换" |
 | 中 | **A2A 远程化（Ch15 深化）** | 当前所有 Agent 仍在进程内；可起第二个 agentd 实例，通过 `AgentCard.endpoint` 走 HTTP 真正跨进程调用，届时注册表才名副其实 |
@@ -354,9 +356,10 @@ curl -s --max-time 5 -o /dev/null -w "%{http_code}\n" http://localhost:3000
 - `docs/ch14-rag.md` — Ch14 总结（检索增强生成：BM25 + Retriever trait 抽象 + 知识库按会话隔离 + 严格模式 + 两个 BM25 坑）
 - `docs/ch18-guardrails.md` — Ch18 总结（护栏：三层规则引擎 + 包裹子模式外壳 + 拦截/脱敏，含坑 13 复现）
 - `docs/ch19-evaluation.md` — Ch19 总结（评估与监控：Scorer trait + 批量评测端点 + 交互式评估器外壳 + 敏感词复用 Ch18）
+- `docs/ch20-prioritization.md` — Ch20 总结（优先级：Prioritizer trait + 三种排序策略 + 拓扑层级 + 成本预算裁剪 + Priority 事件）
 
 ---
 
-*最后更新：2026-09-07。状态：Ch1~Ch19 全部落地（新增 Ch19 评估与监控：Scorer trait 抽象 + 批量评测端点 `/api/eval` + 交互式评估器外壳；敏感词维度复用 Ch18 关键词逻辑，成本统计复用 Ch16 `CHARS_PER_TOKEN` 口径），前端工作台十八种模式可用（新增「评估」）。下一步 Ch20 优先级 / Ch21 探索发现。*\n\n*（历史）2026-09-07：Ch1~Ch18 全部落地*（新增 Ch18 护栏：输入/输出/工具三层规则引擎 + 包裹子模式外壳，支持注入拦截、敏感词脱敏、工具白黑名单），前端工作台十七种模式可用（新增「护栏」）。Ch18 期间复现并修复「外壳模式子模式开思考导致正文为空、护栏检查形同虚设」的坑（见坑 17，是坑 13 的延伸）。下一步 Ch19 评估与监控 / Ch20 优先级 / Ch21 探索发现，或给 Ch18 接入分类模型（已抽象 Rule trait）。*
+*最后更新：2026-09-07。状态：Ch1~Ch20 全部落地（新增 Ch20 优先级：Prioritizer trait 抽象 + 三种排序策略 + 拓扑层级 compute_levels + 成本预算裁剪 apply_cost_budget + Priority SSE 事件 + 前端「优先级」模式；与 Ch14 Retriever / Ch18 Rule / Ch19 Scorer 同套路可插拔），前端工作台十九种模式可用（新增「优先级」）。下一步 Ch21 探索发现。*\n\n*（历史）2026-09-07：Ch1~Ch18 全部落地*（新增 Ch18 护栏：输入/输出/工具三层规则引擎 + 包裹子模式外壳，支持注入拦截、敏感词脱敏、工具白黑名单），前端工作台十七种模式可用（新增「护栏」）。Ch18 期间复现并修复「外壳模式子模式开思考导致正文为空、护栏检查形同虚设」的坑（见坑 17，是坑 13 的延伸）。下一步 Ch19 评估与监控 / Ch20 优先级 / Ch21 探索发现，或给 Ch18 接入分类模型（已抽象 Rule trait）。*
 
 *（历史）2026-09-01：Ch1~Ch16 全部落地（含 Ch14 RAG 检索增强生成：BM25 + Retriever trait 抽象 + 按会话隔离知识库 + 严格模式；Ch16 资源感知：三档策略 + 复杂度分级 + 预算约束 + 优雅降级；Ch17 推理技术已落地），前端工作台十六种模式可用（新增「RAG」「资源优化」「推理技术」），设置页完成，侧栏 会话/智能体 待补。Ch14 期间挖出并修复两个 BM25 坑（中文分词、IDF 负值），Ch16 期间挖出两个影响全局的 Ollama 坑（num_predict 必须放 options、思考会吃光生成预算），见「已踩的坑」12~16。下一步 Ch14 升级向量检索（pull embedding 模型后换 Retriever 实现）或 Ch18 护栏 / Ch19 评估。*

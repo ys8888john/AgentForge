@@ -44,7 +44,11 @@ pub enum AgentEvent {
     /// "classify"（复杂度分级结果）/ "plan"（选中的档位与预算）/
     /// "degrade"（降级到更省的档位）/ "usage"（最终消耗统计）。
     Resource { phase: String, text: String },
-    /// 评估与监控（Ch19 用）：批量/交互评测的可观测化，phase 为
+    /// 优先级（Ch20 用）：任务排序与调度的可观测化，phase 为
+    /// \"rank\"（排序完成）/ \"select\"（选中下一个任务）/ \"skip\"（预算裁剪舍弃）/
+    /// \"execute\"（某任务执行完）/ \"done\"（调度完成）/ \"error\"。
+    Priority { phase: String, text: String },
+    /// 评估与监控（Ch19 用）：批量/交互评测的可观测化，phase 为"}
     /// "start"（启动）/ "score"（综合分）/ "dim"（单维度分）/
     /// "done"（评测完成）/ "report"（汇总报告）。
     Eval { phase: String, text: String },
