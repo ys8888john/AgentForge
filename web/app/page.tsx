@@ -228,6 +228,20 @@ export default function Page() {
           think: settings.think,
         },
         (ev) => {
+          // 「段落起始」类事件（step/plan/worker/agent/reflect/revision）意味着
+          // 后面会跟一段**新的**流式输出，必须重置 token 累加器。
+          // 否则新分支的 token 会追加到上一段后面，出现"分支2/3 内容重复"的假象
+          // （ToT 多分支并行的经典坑）。
+          if (
+            ev.event === "step" ||
+            ev.event === "plan" ||
+            ev.event === "worker" ||
+            ev.event === "agent" ||
+            ev.event === "reflect" ||
+            ev.event === "revision"
+          ) {
+            tokenAcc.current = "";
+          }
           if (ev.event === "step") {
             const [idx, name] = ev.data.split(":");
             setOutput((p) => [
