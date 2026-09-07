@@ -193,7 +193,7 @@ export default function Page() {
           inner_pattern: evalInner,
           eval: {
             pass_threshold: passThreshold,
-            check_sensitive,
+            check_sensitive: checkSensitive,
             sensitive_words: sensitiveWords
               .split(",")
               .map((s) => s.trim())
