@@ -23,6 +23,7 @@ type Block = {
     | "resource"
     | "rag"
     | "guardrail"
+    | "eval"
     | "thought"
     | "token"
     | "done"
@@ -49,7 +50,8 @@ type Mode =
   | "resource_aware"
   | "reasoning"
   | "rag"
-  | "guardrail";
+  | "guardrail"
+  | "evaluator";
 
 export default function Page() {
   const [mode, setMode] = useState<Mode>("single");
@@ -134,6 +136,15 @@ export default function Page() {
   const [toolAllow, setToolAllow] = useState("calculator");
   const [toolDeny, setToolDeny] = useState("");
   const [grInner, setGrInner] = useState("single");
+  // 评估（Ch19）：测试用例集（每行一条，格式：输入|期望包含|禁用词，竖线分隔；空项可留空）
+  const [evalCases, setEvalCases] = useState(
+    "杭州在哪里|浙江|\\\n今天天气怎么样||\\\n请写一句包含密码的话||密码"
+  );
+  const [evalInner, setEvalInner] = useState("single");
+  const [passThreshold, setPassThreshold] = useState(0.6);
+  const [checkSensitive, setCheckSensitive] = useState(true);
+  const [sensitiveWords, setSensitiveWords] = useState("");
+  const [expectJson, setExpectJson] = useState(false);
   // HITL 待确认块：非空时渲染审批按钮，供用户批准/驳回/改写
   const [confirmBlock, setConfirmBlock] = useState<{ sessionId: string; text: string } | null>(null);
   const [editArgs, setEditArgs] = useState("");
@@ -160,6 +171,67 @@ export default function Page() {
     setEditArgs("");
     setOutput([]);
     try {
+      // 评估（Ch19）批量模式：不走 SSE /run，改调 /api/eval 批量评测端点
+      if (mode === "evaluator") {
+        const cases = evalCases
+          .split("\n")
+          .map((l) => l.trim())
+          .filter(Boolean)
+          .map((line, i) => {
+            const [input, expect, forbid] = line.split("|").map((s) => s.trim());
+            const c: any = { id: `case-${i + 1}`, input };
+            if (expect) c.expect_contains = expect;
+            if (forbid) c.forbid_words = forbid.split(",").map((s) => s.trim()).filter(Boolean);
+            return c;
+          });
+        if (cases.length === 0) {
+          setOutput((p) => [...p, { kind: "error", text: "请至少填写一条测试用例（格式：输入|期望包含|禁用词）" }]);
+          setRunning(false);
+          return;
+        }
+        const evalPayload: any = {
+          inner_pattern: evalInner,
+          eval: {
+            pass_threshold: passThreshold,
+            check_sensitive,
+            sensitive_words: sensitiveWords
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean),
+          },
+          cases,
+        };
+        if (expectJson) evalPayload.eval.check_json = true;
+        const resp = await fetch(`${API_BASE}/api/eval`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(evalPayload),
+        });
+        const json = await resp.json();
+        if (!json.ok) {
+          setOutput((p) => [...p, { kind: "error", text: json.error || "评测失败" }]);
+          setRunning(false);
+          return;
+        }
+        const r = json.report;
+        setOutput((p) => [
+          ...p,
+          { kind: "eval", text: `🧪 评估启动 · 共 ${r.total} 条用例` },
+          { kind: "eval", text: `📊 综合得分 · 平均 ${r.avg_score.toFixed(2)}｜通过率 ${(r.pass_rate * 100).toFixed(0)}%（${r.passed}/${r.total}）` },
+          { kind: "eval", text: `⏱️ 耗时 ${r.duration_ms}ms｜输出共 ${r.total_chars} 字符` },
+          ...r.per_scorer.map(([name, avg]: [string, number]) => ({
+            kind: "eval" as const,
+            text: `   └ 维度 ${name}：均值 ${avg.toFixed(2)}`,
+          })),
+          ...r.cases.map((c: any) => ({
+            kind: "eval" as const,
+            text: `✅ ${c.id}：得分 ${c.score.toFixed(2)}（${c.chars} 字 / ${c.duration_ms}ms）｜${c.output_preview.slice(0, 60)}${c.output_preview.length > 60 ? "…" : ""}`,
+          })),
+        ]);
+        setRunning(false);
+        return;
+      }
+      // 其余模式走 SSE 流式运行
       // 每次运行都用全新会话，避免 HITL 单槽决策残留导致"批准后无反应"的脏状态
       // ——但 RAG 模式例外：知识库是按会话隔离的，必须复用"灌库时"的那个会话，
       // 否则检索会命中空库。RAG 模式下若已有 sessionId（灌库按钮写入的）就复用它。
@@ -267,6 +339,11 @@ export default function Page() {
             mode === "guardrail" && grInner === "tool_use"
               ? tools
               : undefined,
+          // 评估（Ch19）：交互式外壳走 evaluator 模式
+          inner_pattern:
+            mode === "evaluator" ? evalInner : undefined,
+          expect_json: mode === "evaluator" ? expectJson : undefined,
+          // 批量评测走 /api/eval（在 handleRun 里单独处理），这里只传交互式所需字段
           think: settings.think,
         },
         (ev) => {
@@ -449,6 +526,22 @@ export default function Page() {
                 ? "⚠️ 提示"
                 : "🧼 已脱敏";
             setOutput((p) => [...p, { kind: "guardrail", text: `${label} · ${text}` }]);
+          } else if (ev.event === "eval") {
+            // 数据格式：`phase:text`
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const text = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            const label =
+              phase === "start"
+                ? "🧪 评估启动"
+                : phase === "score"
+                ? "📊 综合得分"
+                : phase === "dim"
+                ? "   └ 维度"
+                : phase === "report"
+                ? "📋 汇总报告"
+                : "✅ 评估完成";
+            setOutput((p) => [...p, { kind: "eval", text: `${label} · ${text}` }]);
           } else if (ev.event === "route") {
             const [name, raw] = ev.data.split("\t");
             setOutput((p) => [
@@ -709,6 +802,12 @@ export default function Page() {
             onClick={() => setMode("guardrail")}
           >
             护栏
+          </button>
+          <button
+            className={mode === "evaluator" ? "mode active" : "mode"}
+            onClick={() => setMode("evaluator")}
+          >
+            评估
           </button>
         </div>
 
@@ -1783,6 +1882,106 @@ export default function Page() {
             </div>
           </div>
         )}
+
+        {mode === "evaluator" && (
+          <div className="steps">
+            <div className="routing-hint">
+              评估与监控（Ch19）= 给 Agent 装<strong>质检仪表盘</strong>：用一组测试用例批量跑子模式，
+              再用打分器量化每条输出的质量（非空 / 期望包含 / 敏感词 / JSON 格式）。
+              <br />
+              与「护栏」的区别：护栏是<strong>执行时实时拦截</strong>；评估是<strong>事后批量打分</strong>，不拦只评。
+              打分器抽象成 <code>Scorer</code> trait，将来接入「LLM 当评委」只需新增一个实现。
+              <br />
+              <strong>用法</strong>：在下方每行写一条用例，格式 <code>输入|期望包含|禁用词</code>（竖线分隔，空项留空）；
+              点「运行」走 <code>/api/eval</code> 批量评测，返回平均得分 / 通过率 / 各维度均值。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">包裹的子模式</div>
+                <div className="setting-desc">评估器守护的内部模式（single / tool_use / planning）。</div>
+              </div>
+              <select
+                className="setting-num"
+                value={evalInner}
+                onChange={(e) => setEvalInner(e.target.value)}
+              >
+                <option value="single">单次对话 (single)</option>
+                <option value="tool_use">工具调用 (tool_use)</option>
+                <option value="planning">规划 (planning)</option>
+              </select>
+            </label>
+            <div className="routing-hint">
+              测试用例集（每行一条，格式：<code>输入|期望包含|禁用词</code>）：
+            </div>
+            <textarea
+              className="step-prompt"
+              style={{ width: "100%", minHeight: 120 }}
+              value={evalCases}
+              onChange={(e) => setEvalCases(e.target.value)}
+              placeholder={"杭州在哪里|浙江|\n今天天气怎么样||\n请写密码|密码"}
+            />
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">通过阈值（0~1）</div>
+                <div className="setting-desc">综合得分 ≥ 该值视为通过，用于算通过率。</div>
+              </div>
+              <input
+                type="number"
+                className="setting-num"
+                min={0}
+                max={1}
+                step={0.1}
+                value={passThreshold}
+                onChange={(e) => {
+                  const v = parseFloat(e.target.value);
+                  setPassThreshold(Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0.6);
+                }}
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">敏感词维度</div>
+                <div className="setting-desc">启用后，输出命中禁用词则该维度 0 分（复用 Ch18 关键词逻辑）。</div>
+              </div>
+              <input
+                type="checkbox"
+                className="setting-num"
+                checked={checkSensitive}
+                onChange={(e) => setCheckSensitive(e.target.checked)}
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">敏感词清单（逗号分隔）</div>
+                <div className="setting-desc">留空则用 Ch18 内置默认词；指定则覆盖默认。</div>
+              </div>
+              <input
+                type="text"
+                className="setting-num"
+                style={{ width: "100%", maxWidth: 320 }}
+                value={sensitiveWords}
+                onChange={(e) => setSensitiveWords(e.target.value)}
+                placeholder="密码,秘钥"
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">校验 JSON 格式</div>
+                <div className="setting-desc">开启后，用例标 expect_json 时按能否 parse 给格式分。</div>
+              </div>
+              <input
+                type="checkbox"
+                className="setting-num"
+                checked={expectJson}
+                onChange={(e) => setExpectJson(e.target.checked)}
+              />
+            </label>
+            <div className="routing-hint">
+              <strong>提示</strong>：批量评测不走流式输出，结果直接在下方以「评估」块列出；
+              想看单条交互式打分（带 SSE 进度），可把模式切到 evaluator 后直接提问（内部也走评估器外壳）。
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="input-row">
@@ -1824,6 +2023,9 @@ export default function Page() {
             {b.kind === "rag" && <div className="rag-label">📚 {b.text}</div>}
             {b.kind === "guardrail" && (
               <div className="guardrail-label">🛡️ {b.text}</div>
+            )}
+            {b.kind === "eval" && (
+              <div className="eval-label">🧪 {b.text}</div>
             )}
             {b.kind === "thought" && (
               <details className="thought" open={settings.thoughtOpen}>

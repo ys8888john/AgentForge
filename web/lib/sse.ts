@@ -81,6 +81,16 @@ export interface RunOptions {
   tool_allowlist?: string[];
   /** 护栏（Ch18）：工具黑名单（禁止这些工具） */
   tool_denylist?: string[];
+  /** 评估（Ch19）：包裹的子模式（批量/交互都用） */
+  inner_pattern?: string;
+  /** 评估（Ch19）：通过阈值（0~1） */
+  pass_threshold?: number;
+  /** 评估（Ch19）：启用敏感词维度 */
+  check_sensitive?: boolean;
+  /** 评估（Ch19）：敏感词清单（逗号分隔，覆盖默认） */
+  sensitive_words?: string;
+  /** 评估（Ch19）：期望输出为合法 JSON */
+  expect_json?: boolean;
 }
 
 /**

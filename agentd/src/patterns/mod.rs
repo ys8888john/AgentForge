@@ -23,3 +23,8 @@ pub mod reasoning;
 pub mod resource_aware;
 pub mod rag;
 pub mod guardrail;
+pub mod evaluator;
+
+// build_inner 定义在 guardrail.rs 里（Ch12/Ch18 共用的子模式构造器），
+// 这里重新导出，让 evaluator.rs 和 main.rs 也能直接用 `patterns::build_inner`。
+pub(crate) use guardrail::build_inner;

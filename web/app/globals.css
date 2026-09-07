@@ -403,6 +403,18 @@ body {
   margin: 10px 0 4px;
   white-space: pre-wrap;
 }
+/* Ch19 评估：评测进度 / 分数 / 报告 */
+.eval-label {
+  color: #1f6b4f;
+  font-weight: 600;
+  font-size: 13px;
+  background: #e8f5ee;
+  border: 1px dashed #5ab98a;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
 /* HITL 审批面板 */
 .hitl-confirm {
   margin: 12px 0;

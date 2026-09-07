@@ -43,7 +43,7 @@ pub struct GuardrailPatternConfig {
 }
 
 /// 内部子模式的事件流（与 Ch12 的 build_inner 同思路，但只保留演示常用的几种）。
-fn build_inner(
+pub(crate) fn build_inner(
     inner: &str,
     payload: &serde_json::Value,
     _session: String,

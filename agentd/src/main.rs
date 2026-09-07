@@ -8,6 +8,7 @@ mod a2a;
 mod resource;
 mod rag;
 mod guardrails;
+mod eval;
 mod patterns;
 
 use std::convert::Infallible;
@@ -46,6 +47,7 @@ use patterns::reasoning::ReasoningConfig;
 use patterns::rag::RagConfig;
 use patterns::guardrail::GuardrailPatternConfig;
 use guardrails::GuardrailConfig;
+use eval::{parse_cases, parse_eval_config, build_scorers, score_one, aggregate, EvalReport};
 use resource::TierOverride;
 use state::{AppState, HitlDecision};
 
@@ -62,6 +64,8 @@ async fn main() {
         .route("/api/sessions", post(create_session))
         .route("/api/sessions/:id/run", post(run_task))
         .route("/api/sessions/:id/decision", post(hitl_decision))
+        // Ch19 评估：批量评测端点（输入测试用例集 + 配置，返回汇总报告）
+        .route("/api/eval", post(run_eval))
         // Ch14 RAG：管理本会话的知识库（列出 / 批量添加 / 清空）
         .route(
             "/api/sessions/:id/kb",
@@ -670,6 +674,14 @@ async fn run_task(
             cfg,
             state.clone(),
         ))
+    } else if pattern == "evaluator" {
+        // 第十九章评估：包裹子模式跑完后用打分器量化质量（不拦截，只评）
+        Box::pin(patterns::evaluator::run(
+            payload.clone(),
+            _id.clone(),
+            cfg,
+            state.clone(),
+        ))
     } else if pattern == "memory" {
         let recall_k = payload
             .get("recall_k")
@@ -874,6 +886,10 @@ async fn run_task(
                 AgentEvent::Guardrail { phase, text } => {
                     Ok(Event::default().event("guardrail").data(format!("{}:{}", phase, text)))
                 }
+                // Ch19 评估：批量/交互评测（start/score/dim/done/report）
+                AgentEvent::Eval { phase, text } => {
+                    Ok(Event::default().event("eval").data(format!("{}:{}", phase, text)))
+                }
                 AgentEvent::Error(t) => Ok(Event::default().event("error").data(t)),
             },
             Err(e) => Ok(Event::default().event("error").data(e.to_string())),
@@ -961,6 +977,110 @@ async fn self_agent_card(State(state): State<AppState>) -> impl IntoResponse {
         "protocol": "rest+sse",
         "agents_count": state.a2a.len(),
     }))
+}
+
+/// 批量评测（Ch19）：输入测试用例集 + 配置，逐条跑子模式、打分、汇总。
+///
+/// body 形如：
+/// ```json
+/// {
+///   "inner_pattern": "single",
+///   "eval": { "pass_threshold": 0.6, "check_sensitive": true, "sensitive_words": ["密码"] },
+///   "cases": [
+///     { "id": "c1", "input": "杭州在哪", "expect_contains": "浙江" },
+///     { "id": "c2", "input": "写密码", "forbid_words": ["密码"] }
+///   ]
+/// }
+/// ```
+/// 返回 `EvalReport`（平均得分 / 通过率 / 逐 case 明细 / 各维度均值）。
+async fn run_eval(
+    State(state): State<AppState>,
+    Json(payload): Json<Value>,
+) -> impl IntoResponse {
+    use crate::eval::{EvalCase, CaseResult};
+    use crate::patterns::build_inner;
+
+    let cfg = parse_eval_config(&payload);
+    let scorers = build_scorers(&cfg);
+    let cases: Vec<EvalCase> = parse_cases(&payload);
+    if cases.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "ok": false, "error": "cases 为空，请提供测试用例集" })),
+        );
+    }
+    let inner_pattern = payload
+        .get("inner_pattern")
+        .and_then(|v| v.as_str())
+        .unwrap_or("single")
+        .to_string();
+
+    let start_all = std::time::Instant::now();
+    let mut results: Vec<CaseResult> = Vec::new();
+    let mut total_chars = 0usize;
+
+    for case in &cases {
+        // 为每条 case 构造一个独立 payload（用 case.input 覆盖）
+        let mut p = payload.clone();
+        p["input"] = serde_json::Value::String(case.input.clone());
+
+        let mut inner = build_inner(
+            &inner_pattern,
+            &p,
+            format!("eval-{}", case.id),
+            state.config.clone(),
+            state.clone(),
+        );
+        let mut output = String::new();
+        let cstart = std::time::Instant::now();
+        while let Some(ev) = inner.next().await {
+            if let Ok(AgentEvent::Token(t)) = ev {
+                output.push_str(&t);
+            } else if let Ok(AgentEvent::Done(d)) = ev {
+                output = d;
+            }
+        }
+        let duration_ms = cstart.elapsed().as_millis() as u64;
+        let chars = output.chars().count();
+        total_chars += chars;
+        let (score, scores) = score_one(&scorers, case, &output);
+        results.push(CaseResult {
+            id: case.id.clone(),
+            score,
+            scores,
+            output_preview: output.chars().take(2000).collect(),
+            duration_ms,
+            chars,
+        });
+    }
+
+    let duration_ms = start_all.elapsed().as_millis() as u64;
+    let passed = results.iter().filter(|r| r.score >= cfg.pass_threshold).count();
+    let avg = if results.is_empty() {
+        0.0
+    } else {
+        results.iter().map(|r| r.score).sum::<f64>() / results.len() as f64
+    };
+    let mut report = EvalReport {
+        total: results.len(),
+        avg_score: avg,
+        pass_rate: if results.is_empty() {
+            0.0
+        } else {
+            passed as f64 / results.len() as f64
+        },
+        passed,
+        duration_ms,
+        total_chars,
+        cases: results,
+        per_scorer: Vec::new(),
+    };
+    aggregate(&mut report, &scorers);
+
+    (
+        StatusCode::OK,
+        Json(json!({ "ok": true, "report": report })),
+    )
 }
 
 /// RAG 知识库（Ch14）：列出某会话已灌入的资料（文档 id + 正文）。
