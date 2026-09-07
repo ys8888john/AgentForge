@@ -5,7 +5,7 @@ use serde::Deserialize;
 pub struct Config {
     /// Ollama 兼容 API 地址（OpenAI 兼容接口）
     pub ollama_base_url: String,
-    /// 默认模型名，如 qwen2.5:7b
+    /// 默认模型名，如 qwen3.5:9b
     pub ollama_model: String,
     /// daemon 监听地址
     pub listen_addr: String,
@@ -22,7 +22,7 @@ impl Config {
             ollama_base_url: std::env::var("OLLAMA_BASE_URL")
                 .unwrap_or_else(|_| "http://localhost:11434".into()),
             ollama_model: std::env::var("OLLAMA_MODEL")
-                .unwrap_or_else(|_| "qwen2.5:7b".into()),
+                .unwrap_or_else(|_| "qwen3.5:9b".into()),
             listen_addr: std::env::var("LISTEN_ADDR")
                 .unwrap_or_else(|_| "0.0.0.0:8080".into()),
             think: true,
