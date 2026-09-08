@@ -10,6 +10,7 @@ mod rag;
 mod guardrails;
 mod eval;
 mod priority;
+mod explore;
 mod patterns;
 
 use std::convert::Infallible;
@@ -694,6 +695,14 @@ async fn run_task(
             cfg,
             state.clone(),
         ))
+    } else if pattern == "explorer" {
+        // 第二十一章探索与发现：主动遍历环境空间、发现线索、综合成可行动建议
+        Box::pin(patterns::explorer::run(
+            payload.clone(),
+            _id.clone(),
+            cfg,
+            state.clone(),
+        ))
     } else if pattern == "memory" {
         let recall_k = payload
             .get("recall_k")
@@ -905,6 +914,10 @@ async fn run_task(
                 // Ch20 优先级：任务排序与调度（rank/select/skip/execute/done/error）
                 AgentEvent::Priority { phase, text } => {
                     Ok(Event::default().event("priority").data(format!("{}:{}", phase, text)))
+                }
+                // Ch21 探索与发现：scan/prune/discover/synthesize/done/error
+                AgentEvent::Explore { phase, text } => {
+                    Ok(Event::default().event("explore").data(format!("{}:{}", phase, text)))
                 }
                 AgentEvent::Error(t) => Ok(Event::default().event("error").data(t)),
             },

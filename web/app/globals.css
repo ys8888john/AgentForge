@@ -427,6 +427,18 @@ body {
   margin: 10px 0 4px;
   white-space: pre-wrap;
 }
+/* Ch21 探索与发现：扫描 / 发现 / 综合 进度 */
+.explore-label {
+  color: #2b6ca8;
+  font-weight: 600;
+  font-size: 13px;
+  background: #e7f1fa;
+  border: 1px dashed #5aa9d6;
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin: 10px 0 4px;
+  white-space: pre-wrap;
+}
 /* HITL 审批面板 */
 .hitl-confirm {
   margin: 12px 0;

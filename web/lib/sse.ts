@@ -97,6 +97,18 @@ export interface RunOptions {
   cost_budget?: number;
   /** 优先级（Ch20）：冲突时跳过低优任务 */
   skip_on_conflict?: boolean;
+  /** 探索与发现（Ch21）：探索目标 files/structure/tools */
+  target?: string;
+  /** 探索与发现（Ch21）：探索根目录（空=当前目录） */
+  root?: string;
+  /** 探索与发现（Ch21）：关键字（逗号分隔，文件名/内容命中） */
+  keywords?: string;
+  /** 探索与发现（Ch21）：扩展名白名单（逗号分隔，如 rs,md） */
+  exts?: string;
+  /** 探索与发现（Ch21）：结构模式最大递归深度 */
+  max_depth?: number;
+  /** 探索与发现（Ch21）：文件命中数量上限（可生长探索闸门） */
+  cap?: number;
 }
 
 /**

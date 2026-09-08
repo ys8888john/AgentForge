@@ -19,3 +19,5 @@ uuid = { version = "1", features = ["v4"] }
 async-stream = "0.3"
 tower-http = { version = "0.5", features = ["cors"] }
 chrono = "0.4"
+ignore = "0.4"
+walkdir = "2"

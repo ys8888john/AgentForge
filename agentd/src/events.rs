@@ -60,6 +60,11 @@ pub enum AgentEvent {
     /// "retrieve"（BM25 召回的相关片段）/ "inject"（注入上下文的规模）。
     /// text 为召回摘要或注入统计，前端渲染成"检索到了什么 / 喂了什么进模型"。
     Rag { phase: String, text: String },
+    /// 探索与发现（Ch21 用）：主动探索未知空间的可观测化，phase 为
+    /// "scan"（开始探索）/ "prune"（命中过多已截断，建议收窄）/
+    /// "discover"（罗列发现：文件/结构/工具）/ "synthesize"（LLM 综合中）/
+    /// "done"（探索完成）/ "error"。
+    Explore { phase: String, text: String },
     /// Agent 间通信（Ch15 A2A 用）：一条消息的流动，phase 为
     /// "discover"（协调者发现可用 Agent）/ "request"（协调者委派子任务）/
     /// "response"（Agent 回传结果）/ "negotiate"（多轮协商修订）。

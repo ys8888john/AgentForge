@@ -53,7 +53,8 @@ type Mode =
   | "rag"
   | "guardrail"
   | "evaluator"
-  | "prioritizer";
+  | "prioritizer"
+  | "explorer";
 
 export default function Page() {
   const [mode, setMode] = useState<Mode>("single");
@@ -154,6 +155,13 @@ export default function Page() {
   const [prioStrategy, setPrioStrategy] = useState("importance_urgency");
   const [costBudget, setCostBudget] = useState(0);
   const [skipOnConflict, setSkipOnConflict] = useState(false);
+  // 探索与发现（Ch21）：主动遍历环境、发现线索、综合成可行动建议
+  const [exTarget, setExTarget] = useState("files");
+  const [exRoot, setExRoot] = useState("");
+  const [exKeywords, setExKeywords] = useState("");
+  const [exExts, setExExts] = useState("rs,md");
+  const [exMaxDepth, setExMaxDepth] = useState(3);
+  const [exCap, setExCap] = useState(50);
   // HITL 待确认块：非空时渲染审批按钮，供用户批准/驳回/改写
   const [confirmBlock, setConfirmBlock] = useState<{ sessionId: string; text: string } | null>(null);
   const [editArgs, setEditArgs] = useState("");
@@ -379,6 +387,13 @@ export default function Page() {
                     return t;
                   })
               : undefined,
+          // 探索与发现（Ch21）：主动探索未知空间
+          target: mode === "explorer" ? exTarget : undefined,
+          root: mode === "explorer" && exRoot.trim() ? exRoot.trim() : undefined,
+          keywords: mode === "explorer" && exKeywords.trim() ? exKeywords.trim() : undefined,
+          exts: mode === "explorer" && exExts.trim() ? exExts.trim() : undefined,
+          max_depth: mode === "explorer" ? exMaxDepth : undefined,
+          cap: mode === "explorer" ? exCap : undefined,
           // 批量评测走 /api/eval（在 handleRun 里单独处理），这里只传交互式所需字段
           think: settings.think,
         },
@@ -594,6 +609,24 @@ export default function Page() {
                 ? "✅ 任务完成"
                 : "🏁 调度完成";
             setOutput((p) => [...p, { kind: "priority", text: `${label} · ${text}` }]);
+          } else if (ev.event === "explore") {
+            // 数据格式：`phase:text`
+            const ci = ev.data.indexOf(":");
+            const phase = ci >= 0 ? ev.data.slice(0, ci) : "";
+            const text = ci >= 0 ? ev.data.slice(ci + 1) : ev.data;
+            const label =
+              phase === "scan"
+                ? "🔭 开始探索"
+                : phase === "prune"
+                ? "✂️ 命中过多·已截断"
+                : phase === "discover"
+                ? "🔍 发现"
+                : phase === "synthesize"
+                ? "🧠 综合中"
+                : phase === "error"
+                ? "⚠️ 错误"
+                : "🏁 探索完成";
+            setOutput((p) => [...p, { kind: "explore", text: `${label} · ${text}` }]);
           } else if (ev.event === "route") {
             const [name, raw] = ev.data.split("\t");
             setOutput((p) => [
@@ -866,6 +899,12 @@ export default function Page() {
             onClick={() => setMode("prioritizer")}
           >
             优先级
+          </button>
+          <button
+            className={mode === "explorer" ? "mode active" : "mode"}
+            onClick={() => setMode("explorer")}
+          >
+            探索发现
           </button>
         </div>
 
@@ -2124,6 +2163,129 @@ export default function Page() {
             </div>
           </div>
         )}
+        {mode === "explorer" && (
+          <div className="steps">
+            <div className="routing-hint">
+              探索与发现（Ch21）= 给 Agent 装<strong>环境探针</strong>：面对未知代码库/目录时，
+              不再被动等用户把问题说清楚，而是主动<strong>遍历空间、发现线索</strong>（相关文件、目录骨架、可复用工具），
+              再用 LLM 综合成「发现了什么 / 意味着什么 / 下一步该读改问哪几个」的可行动建议。
+              <br />
+              与「思维树 ToT（Ch17）」的区别：ToT 在<strong>推理空间</strong>分叉探索思路；本章在<strong>环境/资源空间</strong>真实翻文件系统。
+              与「RAG（Ch14）」的区别：RAG 是「给定问题→被动召回」；本章是「带模糊目标→主动探索→归纳建议」。
+              <br />
+              底层用 ripgrep 同款 <code>ignore</code> 遍历（自动尊重 .gitignore，不扫 node_modules/.git），
+              命中过多会自动截断并提示收窄（可生长探索）。
+              <br />
+              <strong>用法</strong>：选探索目标，填关键字/扩展名，点「运行」；下方以「探索发现」块展示扫描→发现→综合全过程。
+            </div>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">探索目标</div>
+                <div className="setting-desc">
+                  files：按关键字/扩展名发现文件（含命中行数）；
+                  structure：目录树骨架（受深度限制）；
+                  tools：从已注册能力里发现可复用工具。
+                </div>
+              </div>
+              <select
+                className="setting-num"
+                value={exTarget}
+                onChange={(e) => setExTarget(e.target.value)}
+              >
+                <option value="files">文件发现 files</option>
+                <option value="structure">结构发现 structure</option>
+                <option value="tools">工具发现 tools</option>
+              </select>
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">根目录</div>
+                <div className="setting-desc">留空 = daemon 当前工作目录（即项目根）。</div>
+              </div>
+              <input
+                type="text"
+                className="setting-num"
+                value={exRoot}
+                placeholder="留空=当前目录"
+                onChange={(e) => setExRoot(e.target.value)}
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">关键字</div>
+                <div className="setting-desc">
+                  逗号分隔；文件名或内容命中其一即收集（files 模式）。无关键字时仅按扩展名罗列。
+                </div>
+              </div>
+              <input
+                type="text"
+                className="setting-num"
+                value={exKeywords}
+                placeholder="如 priority,rank"
+                onChange={(e) => setExKeywords(e.target.value)}
+              />
+            </label>
+            <label className="setting-row plan-steps-row">
+              <div className="setting-info">
+                <div className="setting-title">扩展名白名单</div>
+                <div className="setting-desc">逗号分隔，如 rs,md；空 = 不限。</div>
+              </div>
+              <input
+                type="text"
+                className="setting-num"
+                value={exExts}
+                placeholder="如 rs,md"
+                onChange={(e) => setExExts(e.target.value)}
+              />
+            </label>
+            {exTarget === "structure" && (
+              <label className="setting-row plan-steps-row">
+                <div className="setting-info">
+                  <div className="setting-title">结构最大深度</div>
+                  <div className="setting-desc">目录树递归深度上限，防爆炸。</div>
+                </div>
+                <input
+                  type="number"
+                  className="setting-num"
+                  min={1}
+                  max={8}
+                  step={1}
+                  value={exMaxDepth}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    setExMaxDepth(Number.isFinite(v) ? Math.min(8, Math.max(1, v)) : 3);
+                  }}
+                />
+              </label>
+            )}
+            {exTarget === "files" && (
+              <label className="setting-row plan-steps-row">
+                <div className="setting-info">
+                  <div className="setting-title">命中数量上限</div>
+                  <div className="setting-desc">
+                    可生长探索的闸门：超过该值截断并提示收窄（默认 50）。
+                  </div>
+                </div>
+                <input
+                  type="number"
+                  className="setting-num"
+                  min={5}
+                  max={500}
+                  step={5}
+                  value={exCap}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value, 10);
+                    setExCap(Number.isFinite(v) ? Math.min(500, Math.max(5, v)) : 50);
+                  }}
+                />
+              </label>
+            )}
+            <div className="routing-hint">
+              <strong>试试</strong>：目标选 <code>files</code>、关键字填 <code>priority</code>、扩展名 <code>rs</code>，
+              会扫出 agentd 里所有含 priority 的 .rs 文件；目标选 <code>structure</code> 看目录骨架。
+            </div>
+          </div>
+        )}
       </section>
 
       <section className="input-row">
@@ -2171,6 +2333,9 @@ export default function Page() {
             )}
             {b.kind === "priority" && (
               <div className="priority-label">📊 {b.text}</div>
+            )}
+            {b.kind === "explore" && (
+              <div className="explore-label">🧭 {b.text}</div>
             )}
             {b.kind === "thought" && (
               <details className="thought" open={settings.thoughtOpen}>
